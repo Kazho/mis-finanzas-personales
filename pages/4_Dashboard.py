@@ -11,6 +11,7 @@ from src.proyeccion import (
     evaluar_plan_con_costo,
 )
 from src.formato import clp
+from src.analisis_gastos import comparacion_mes_actual, comparacion_por_categoria, alertas_categoria, logros_ahorro
 
 st.set_page_config(page_title="Dashboard", page_icon="\U0001F4C8", layout="wide")
 init_db()
@@ -69,6 +70,47 @@ with tab_gastos:
     if df_trans.empty:
         st.info("Aun no has cargado ninguna cartola. Ve a 'Cargar Cartola' para empezar.")
     else:
+        comp = comparacion_mes_actual(df_trans)
+        if comp is None:
+            st.info("Necesitas transacciones de al menos 2 meses distintos para ver la comparacion mensual y las alertas.")
+        else:
+            st.subheader(f"Este mes ({comp['mes_actual']}) vs el anterior ({comp['mes_anterior']})")
+            delta_txt = f"{comp['porcentaje']:+.1f}% vs mes anterior" if comp["porcentaje"] is not None else None
+            cm1, cm2 = st.columns(2)
+            cm1.metric(f"Gasto en {comp['mes_actual']}", clp(comp["gasto_actual"]), delta=delta_txt, delta_color="inverse")
+            cm2.metric(f"Gasto en {comp['mes_anterior']}", clp(comp["gasto_anterior"]))
+
+            comp_cat = comparacion_por_categoria(df_trans)
+            if not comp_cat.empty:
+                fig = px.bar(
+                    comp_cat,
+                    x="categoria",
+                    y="monto_cargo",
+                    color="mes",
+                    barmode="group",
+                    title="Gasto por categoria: este mes vs el anterior",
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            logros = logros_ahorro(df_trans)
+            if logros:
+                st.markdown(f"**Buen dato en {comp['mes_actual']}**")
+                for l in logros:
+                    st.success(
+                        f"**{l['categoria']}**: destinaste {clp(l['actual'])} este mes, un {l['exceso_pct']:.0f}% mas "
+                        f"que tu promedio historico ({clp(l['promedio'])} en los ultimos {l['n_meses']} meses)."
+                    )
+
+            alertas = alertas_categoria(df_trans)
+            if alertas:
+                st.markdown(f"**Alertas de gasto en {comp['mes_actual']}**")
+                for a in alertas:
+                    st.warning(
+                        f"**{a['categoria']}**: gastaste {clp(a['actual'])} este mes, un {a['exceso_pct']:.0f}% mas "
+                        f"que tu promedio historico ({clp(a['promedio'])} en los ultimos {a['n_meses']} meses)."
+                    )
+
+        st.divider()
         st.subheader("En que gasto mi dinero")
 
         fmin, fmax = df_trans["fecha"].min().date(), df_trans["fecha"].max().date()

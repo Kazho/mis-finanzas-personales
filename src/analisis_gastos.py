@@ -1,6 +1,18 @@
 """Analisis de gastos por mes: comparacion mes a mes y alertas por categoria."""
 import pandas as pd
 
+CATEGORIAS_POSITIVAS = ("ahorro", "inversion", "inversión")
+
+
+def es_categoria_ahorro(categoria: str) -> bool:
+    """Categorias que representan plata movida a ahorro/inversion, no consumo real.
+
+    Se usan para excluirlas de los totales y graficos de "gasto" (no es gasto, es plata que
+    sigue siendo tuya) y para mostrarlas por separado como un buen dato en vez de una alerta.
+    """
+    texto = categoria.lower()
+    return any(palabra in texto for palabra in CATEGORIAS_POSITIVAS)
+
 
 def _con_mes(df_trans: pd.DataFrame) -> pd.DataFrame:
     df = df_trans.copy()
@@ -8,14 +20,28 @@ def _con_mes(df_trans: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def gasto_por_mes(df_trans: pd.DataFrame) -> pd.Series:
-    df = _con_mes(df_trans)
-    return df[df["monto_cargo"] > 0].groupby("mes")["monto_cargo"].sum().sort_index()
-
-
 def gasto_por_categoria_mes(df_trans: pd.DataFrame) -> pd.DataFrame:
+    """Monto por mes y categoria, incluyendo ahorro (se filtra despues segun el uso)."""
     df = _con_mes(df_trans)
     return df[df["monto_cargo"] > 0].groupby(["mes", "categoria"], as_index=False)["monto_cargo"].sum()
+
+
+def gasto_por_mes(df_trans: pd.DataFrame) -> pd.Series:
+    """Gasto real por mes: cargos que no son transferencias a ahorro/inversion."""
+    cat_mes = gasto_por_categoria_mes(df_trans)
+    if cat_mes.empty:
+        return pd.Series(dtype=float)
+    cat_mes = cat_mes[~cat_mes["categoria"].apply(es_categoria_ahorro)]
+    return cat_mes.groupby("mes")["monto_cargo"].sum().sort_index()
+
+
+def ahorro_por_mes(df_trans: pd.DataFrame) -> pd.Series:
+    """Cuanto se destino a categorias de ahorro/inversion por mes."""
+    cat_mes = gasto_por_categoria_mes(df_trans)
+    if cat_mes.empty:
+        return pd.Series(dtype=float)
+    cat_mes = cat_mes[cat_mes["categoria"].apply(es_categoria_ahorro)]
+    return cat_mes.groupby("mes")["monto_cargo"].sum().sort_index()
 
 
 def comparacion_mes_actual(df_trans: pd.DataFrame) -> dict | None:
@@ -43,10 +69,11 @@ def comparacion_mes_actual(df_trans: pd.DataFrame) -> dict | None:
 
 
 def comparacion_por_categoria(df_trans: pd.DataFrame) -> pd.DataFrame:
-    """Gasto por categoria del mes actual y del anterior, lado a lado."""
+    """Gasto real (sin ahorro/inversion) por categoria del mes actual y del anterior, lado a lado."""
     cat_mes = gasto_por_categoria_mes(df_trans)
     if cat_mes.empty:
         return pd.DataFrame(columns=["mes", "categoria", "monto_cargo"])
+    cat_mes = cat_mes[~cat_mes["categoria"].apply(es_categoria_ahorro)]
     meses = sorted(cat_mes["mes"].unique())
     if len(meses) < 2:
         return pd.DataFrame(columns=["mes", "categoria", "monto_cargo"])
@@ -54,14 +81,6 @@ def comparacion_por_categoria(df_trans: pd.DataFrame) -> pd.DataFrame:
     comp = cat_mes[cat_mes["mes"].isin([mes_anterior, mes_actual])].copy()
     comp["mes"] = comp["mes"].astype(str)
     return comp
-
-
-CATEGORIAS_POSITIVAS = ("ahorro", "inversion", "inversión")
-
-
-def _es_categoria_positiva(categoria: str) -> bool:
-    texto = categoria.lower()
-    return any(palabra in texto for palabra in CATEGORIAS_POSITIVAS)
 
 
 def _categorias_sobre_promedio(df_trans: pd.DataFrame, umbral: float, min_meses_historia: int) -> pd.DataFrame:
@@ -101,7 +120,7 @@ def alertas_categoria(df_trans: pd.DataFrame, umbral: float = 1.3, min_meses_his
     combinado = _categorias_sobre_promedio(df_trans, umbral, min_meses_historia)
     if combinado.empty:
         return []
-    combinado = combinado[~combinado["categoria"].apply(_es_categoria_positiva)]
+    combinado = combinado[~combinado["categoria"].apply(es_categoria_ahorro)]
     return combinado.to_dict("records")
 
 
@@ -110,5 +129,5 @@ def logros_ahorro(df_trans: pd.DataFrame, umbral: float = 1.3, min_meses_histori
     combinado = _categorias_sobre_promedio(df_trans, umbral, min_meses_historia)
     if combinado.empty:
         return []
-    combinado = combinado[combinado["categoria"].apply(_es_categoria_positiva)]
+    combinado = combinado[combinado["categoria"].apply(es_categoria_ahorro)]
     return combinado.to_dict("records")

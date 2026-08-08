@@ -144,18 +144,24 @@ def listar_transacciones_sin_categoria() -> list[dict]:
 
 
 def actualizar_categoria_transaccion(transaccion_id: int, categoria: str):
+    """Asigna una categoria a mano. Queda marcada como manual para que 'recategorizar_todas'
+    (o volver a categorizar automaticamente) nunca la pise sin que el usuario lo pida."""
     with get_conn() as conn:
-        conn.execute("UPDATE transacciones SET categoria = ? WHERE id = ?", (categoria, transaccion_id))
+        conn.execute(
+            "UPDATE transacciones SET categoria = ?, categoria_manual = 1 WHERE id = ?",
+            (categoria, transaccion_id),
+        )
 
 
 def recategorizar_todas() -> int:
-    """Vuelve a aplicar las reglas de categorizacion a todas las transacciones ya guardadas.
+    """Vuelve a aplicar las reglas de categorizacion a las transacciones categorizadas automaticamente.
 
-    Util cuando se agrega o edita una regla y se quiere que tambien afecte a
-    movimientos importados anteriormente, no solo a los nuevos.
+    Util cuando se agrega o edita una regla y se quiere que tambien afecte a movimientos
+    importados anteriormente. Las transacciones que el usuario categorizo a mano (marcadas
+    como categoria_manual) se dejan intactas, para no perder ese trabajo.
     """
     with get_conn() as conn:
-        filas = conn.execute("SELECT id, descripcion FROM transacciones").fetchall()
+        filas = conn.execute("SELECT id, descripcion FROM transacciones WHERE categoria_manual = 0").fetchall()
         cambios = 0
         for f in filas:
             nueva_categoria = categorizar(f["descripcion"])

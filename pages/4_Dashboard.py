@@ -10,8 +10,15 @@ from src.proyeccion import (
     optimizar_asignacion,
     evaluar_plan_con_costo,
 )
-from src.formato import clp
-from src.analisis_gastos import comparacion_mes_actual, comparacion_por_categoria, alertas_categoria, logros_ahorro
+from src.formato import clp, clp_md
+from src.analisis_gastos import (
+    comparacion_mes_actual,
+    comparacion_por_categoria,
+    alertas_categoria,
+    logros_ahorro,
+    es_categoria_ahorro,
+    ahorro_por_mes,
+)
 
 st.set_page_config(page_title="Dashboard", page_icon="\U0001F4C8", layout="wide")
 init_db()
@@ -97,8 +104,8 @@ with tab_gastos:
                 st.markdown(f"**Buen dato en {comp['mes_actual']}**")
                 for l in logros:
                     st.success(
-                        f"**{l['categoria']}**: destinaste {clp(l['actual'])} este mes, un {l['exceso_pct']:.0f}% mas "
-                        f"que tu promedio historico ({clp(l['promedio'])} en los ultimos {l['n_meses']} meses)."
+                        f"**{l['categoria']}**: destinaste **{clp_md(l['actual'])}** este mes, un **{l['exceso_pct']:.0f}%** mas "
+                        f"que tu promedio historico (**{clp_md(l['promedio'])}** en los ultimos {l['n_meses']} meses)."
                     )
 
             alertas = alertas_categoria(df_trans)
@@ -106,8 +113,8 @@ with tab_gastos:
                 st.markdown(f"**Alertas de gasto en {comp['mes_actual']}**")
                 for a in alertas:
                     st.warning(
-                        f"**{a['categoria']}**: gastaste {clp(a['actual'])} este mes, un {a['exceso_pct']:.0f}% mas "
-                        f"que tu promedio historico ({clp(a['promedio'])} en los ultimos {a['n_meses']} meses)."
+                        f"**{a['categoria']}**: gastaste **{clp_md(a['actual'])}** este mes, un **{a['exceso_pct']:.0f}%** mas "
+                        f"que tu promedio historico (**{clp_md(a['promedio'])}** en los ultimos {a['n_meses']} meses)."
                     )
 
         st.divider()
@@ -123,15 +130,22 @@ with tab_gastos:
         mask = (df_trans["fecha"].dt.date >= desde) & (df_trans["fecha"].dt.date <= hasta)
         df_periodo = df_trans[mask]
 
-        total_gastos = df_periodo["monto_cargo"].sum()
+        es_ahorro_mask = df_periodo["categoria"].apply(es_categoria_ahorro)
+        total_gastos = df_periodo.loc[~es_ahorro_mask, "monto_cargo"].sum()
+        total_ahorro_periodo = df_periodo.loc[es_ahorro_mask, "monto_cargo"].sum()
         total_ingresos = df_periodo["monto_abono"].sum()
 
-        ca, cb = st.columns(2)
-        ca.metric("Total cargos (salidas) en el periodo", clp(total_gastos))
-        cb.metric("Total abonos (entradas) en el periodo", clp(total_ingresos))
+        ca, cb, cc = st.columns(3)
+        ca.metric("Total gastos en el periodo", clp(total_gastos))
+        cb.metric("Destinado a ahorro en el periodo", clp(total_ahorro_periodo))
+        cc.metric("Total abonos (entradas) en el periodo", clp(total_ingresos))
+        st.caption(
+            "El gasto no incluye lo que transferiste a categorias de ahorro/inversion — esa plata sigue siendo "
+            "tuya, no es consumo."
+        )
 
         gasto_categoria = (
-            df_periodo[df_periodo["monto_cargo"] > 0]
+            df_periodo[(df_periodo["monto_cargo"] > 0) & ~es_ahorro_mask]
             .groupby("categoria", as_index=False)["monto_cargo"]
             .sum()
             .sort_values("monto_cargo", ascending=False)
@@ -196,7 +210,32 @@ with tab_ahorros:
         )
         st.plotly_chart(fig, use_container_width=True)
 
+        serie_ahorro = ahorro_por_mes(df_trans) if not df_trans.empty else pd.Series(dtype=float)
+        if len(serie_ahorro) >= 1:
+            st.divider()
+            st.subheader("Cuanto ahorre este mes")
+            st.caption("Segun las transferencias categorizadas como ahorro/inversion en tu cartola.")
+
+            if len(serie_ahorro) >= 2:
+                mes_actual_a, mes_anterior_a = serie_ahorro.index[-1], serie_ahorro.index[-2]
+                actual_a, anterior_a = float(serie_ahorro.iloc[-1]), float(serie_ahorro.iloc[-2])
+                diferencia_a = actual_a - anterior_a
+                pct_a = (diferencia_a / anterior_a * 100) if anterior_a else None
+                delta_txt_a = f"{pct_a:+.1f}% vs mes anterior" if pct_a is not None else None
+                ca1, ca2 = st.columns(2)
+                ca1.metric(f"Ahorrado en {mes_actual_a}", clp(actual_a), delta=delta_txt_a)
+                ca2.metric(f"Ahorrado en {mes_anterior_a}", clp(anterior_a))
+            else:
+                st.metric(f"Ahorrado en {serie_ahorro.index[-1]}", clp(serie_ahorro.iloc[-1]))
+
+            df_serie_ahorro = serie_ahorro.reset_index()
+            df_serie_ahorro.columns = ["mes", "monto"]
+            df_serie_ahorro["mes"] = df_serie_ahorro["mes"].astype(str)
+            fig = px.bar(df_serie_ahorro, x="mes", y="monto", title="Ahorro destinado por mes")
+            st.plotly_chart(fig, use_container_width=True)
+
         if df_ahorros["rentabilidad_generada"].notna().any():
+            st.divider()
             st.subheader("Cuanto he generado con mis ahorros")
             rent = df_ahorros.sort_values("fecha").groupby("cuenta").tail(1)[["cuenta", "rentabilidad_generada"]].dropna()
             fig = px.bar(rent, x="cuenta", y="rentabilidad_generada", title="Rentabilidad generada a la fecha, por cuenta")
@@ -259,15 +298,15 @@ with tab_proyeccion:
                     for p in planes_con_costo:
                         if p["conviene_activar"]:
                             st.success(
-                                f"**{p['cuenta']}**: con tu saldo actual ({clp(p['saldo'])}) SI te conviene pagar el "
-                                f"plan — ganarias {clp(p['diferencia'])} mas al año que sin activarlo (equilibrio en "
-                                f"{clp(p['punto_equilibrio'])})."
+                                f"**{p['cuenta']}**: con tu saldo actual (**{clp_md(p['saldo'])}**) SI te conviene pagar el "
+                                f"plan — ganarias **{clp_md(p['diferencia'])}** mas al año que sin activarlo (equilibrio en "
+                                f"**{clp_md(p['punto_equilibrio'])}**)."
                             )
                         else:
                             st.warning(
-                                f"**{p['cuenta']}**: con tu saldo actual ({clp(p['saldo'])}) NO te conviene pagar el "
-                                f"plan — perderias {clp(-p['diferencia'])} al año frente a no activarlo. Te conviene "
-                                f"desde que tengas {clp(p['punto_equilibrio'])} en la cuenta."
+                                f"**{p['cuenta']}**: con tu saldo actual (**{clp_md(p['saldo'])}**) NO te conviene pagar el "
+                                f"plan — perderias **{clp_md(-p['diferencia'])}** al año frente a no activarlo. Te conviene "
+                                f"desde que tengas **{clp_md(p['punto_equilibrio'])}** en la cuenta."
                             )
 
                 st.divider()
@@ -279,10 +318,10 @@ with tab_proyeccion:
                     ganancia_optima = sum(r["ganancia"] for r in reparto)
                     diferencia = ganancia_optima - ganancia_actual_total
                     if diferencia > 1:
-                        detalle = ", ".join(f"{clp(r['monto_asignado'])} en {r['cuenta']}" for r in reparto)
+                        detalle = ", ".join(f"**{clp_md(r['monto_asignado'])}** en **{r['cuenta']}**" for r in reparto)
                         st.success(
-                            f"Repartiendo tu total ({clp(total_ahorros)}) asi: {detalle} — "
-                            f"generarias aprox. {clp(ganancia_optima)} al año, {clp(diferencia)} mas que con la "
+                            f"Repartiendo tu total (**{clp_md(total_ahorros)}**) asi: {detalle} — "
+                            f"generarias aprox. **{clp_md(ganancia_optima)}** al año, **{clp_md(diferencia)}** mas que con la "
                             "distribucion actual."
                         )
                     else:

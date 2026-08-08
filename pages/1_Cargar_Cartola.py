@@ -70,12 +70,15 @@ if archivo is not None:
         with get_conn() as conn:
             for i, t in enumerate(resultado["transacciones"]):
                 categoria = editado.iloc[i]["categoria"]
+                # Si el usuario cambio la categoria sugerida por la regla automatica, se marca
+                # como manual para que "Recategorizar transacciones existentes" no la pise despues.
+                categoria_manual = int(categoria != categorizar(t["descripcion"]))
                 cur = conn.execute(
                     """
                     INSERT OR IGNORE INTO transacciones
                         (cuenta_id, fecha, descripcion, sucursal, monto_cargo, monto_abono, saldo,
-                         categoria, cartola_numero, archivo_origen, hash_dedupe)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         categoria, categoria_manual, cartola_numero, archivo_origen, hash_dedupe)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         cuenta_id,
@@ -86,6 +89,7 @@ if archivo is not None:
                         t["monto_abono"],
                         t["saldo"],
                         categoria,
+                        categoria_manual,
                         resultado["cartola_numero"],
                         archivo.name,
                         t["hash_dedupe"],

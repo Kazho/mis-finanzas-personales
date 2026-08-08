@@ -5,7 +5,7 @@ import pandas as pd
 
 from src.db import get_conn, init_db
 from src.proyeccion import listar_config, guardar_config
-from src.formato import clp
+from src.formato import clp, clp_md
 
 st.set_page_config(page_title="Registrar Ahorro", page_icon="\U0001F4B5", layout="wide")
 init_db()
@@ -70,7 +70,7 @@ if st.button("Guardar snapshot", type="primary"):
                 """,
                 (fecha.isoformat(), cuenta_final, saldo, rentabilidad or None, nota or None),
             )
-        st.success(f"Guardado: {cuenta_final} el {fecha} con saldo ${saldo:,.0f}".replace(",", "."))
+        st.success(f"Guardado: **{cuenta_final}** el {fecha} con saldo **{clp_md(saldo)}**")
         st.session_state.ahorro_form_id += 1
         st.rerun()
 

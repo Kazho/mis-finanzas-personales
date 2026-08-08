@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS transacciones (
     monto_abono REAL NOT NULL DEFAULT 0,
     saldo REAL,
     categoria TEXT,
+    categoria_manual INTEGER NOT NULL DEFAULT 0,
     cartola_numero TEXT,
     archivo_origen TEXT,
     hash_dedupe TEXT UNIQUE
@@ -86,7 +87,12 @@ CREATE TABLE IF NOT EXISTS ahorros_config (
 """
 
 MIGRACIONES = [
-    "ALTER TABLE ahorros_config ADD COLUMN costo_mensual REAL",
+    ("ahorros_config", "costo_mensual", "ALTER TABLE ahorros_config ADD COLUMN costo_mensual REAL"),
+    (
+        "transacciones",
+        "categoria_manual",
+        "ALTER TABLE transacciones ADD COLUMN categoria_manual INTEGER NOT NULL DEFAULT 0",
+    ),
 ]
 
 
@@ -106,10 +112,9 @@ def get_conn():
 def init_db():
     with get_conn() as conn:
         conn.executescript(SCHEMA)
-        columnas = {r["name"] for r in conn.execute("PRAGMA table_info(ahorros_config)").fetchall()}
-        for alter in MIGRACIONES:
-            columna_nueva = alter.split("ADD COLUMN")[1].strip().split()[0]
-            if columna_nueva not in columnas:
+        for tabla, columna, alter in MIGRACIONES:
+            columnas = {r["name"] for r in conn.execute(f"PRAGMA table_info({tabla})").fetchall()}
+            if columna not in columnas:
                 conn.execute(alter)
 
 

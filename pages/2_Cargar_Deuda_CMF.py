@@ -9,7 +9,10 @@ st.set_page_config(page_title="Cargar Deuda CMF", page_icon="\U0001F4CA", layout
 init_db()
 
 st.title("Cargar Informe de Deudas CMF")
-st.caption("Descarga tu informe en www.cmfchile.cl y subelo aqui para llevar un historial de tu endeudamiento.")
+st.caption(
+    "Descarga tu informe en [conocetudeuda.cmfchile.cl](https://conocetudeuda.cmfchile.cl/informe-deudas/629/w4-contents.html) "
+    "y subelo aqui para llevar un historial de tu endeudamiento."
+)
 
 archivo = st.file_uploader("Selecciona el PDF del informe de deudas", type="pdf")
 

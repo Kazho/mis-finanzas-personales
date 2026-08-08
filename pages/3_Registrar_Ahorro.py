@@ -141,27 +141,36 @@ if cuentas_existentes:
         "mostrarte el avance y una fecha estimada de cumplimiento segun tu ritmo de ahorro reciente."
     )
 
-    with st.form("form_meta", clear_on_submit=True):
-        mc1, mc2 = st.columns(2)
-        nombre_meta = mc1.text_input("Nombre de la meta (ej: Pie departamento, Viaje)")
-        cuenta_meta = mc2.selectbox("Aplica a", [TOTAL_AHORROS] + cuentas_existentes)
-        mc3, mc4 = st.columns(2)
-        monto_objetivo = mc3.number_input("Monto objetivo", min_value=0.0, step=10000.0, format="%.0f")
-        tiene_fecha = mc4.checkbox("Ponerle fecha limite")
-        fecha_objetivo = st.date_input("Fecha limite", value=datetime.date.today()) if tiene_fecha else None
+    # No se usa st.form: dentro de un form los widgets no se refrescan hasta enviar,
+    # asi que el campo de fecha que aparece al marcar "Ponerle fecha limite" no llegaba
+    # a mostrarse (mismo problema que hubo antes en esta misma pagina).
+    if "meta_form_id" not in st.session_state:
+        st.session_state.meta_form_id = 0
+    mfid = st.session_state.meta_form_id
 
-        if st.form_submit_button("Crear meta", type="primary"):
-            if not nombre_meta.strip() or monto_objetivo <= 0:
-                st.error("Debes indicar un nombre y un monto objetivo mayor a 0.")
-            else:
-                agregar_meta(
-                    nombre_meta.strip(),
-                    monto_objetivo,
-                    None if cuenta_meta == TOTAL_AHORROS else cuenta_meta,
-                    fecha_objetivo,
-                )
-                st.success(f"Meta '{nombre_meta.strip()}' creada.")
-                st.rerun()
+    mc1, mc2 = st.columns(2)
+    nombre_meta = mc1.text_input("Nombre de la meta (ej: Pie departamento, Viaje)", key=f"meta_nombre_{mfid}")
+    cuenta_meta = mc2.selectbox("Aplica a", [TOTAL_AHORROS] + cuentas_existentes, key=f"meta_cuenta_{mfid}")
+    mc3, mc4 = st.columns(2)
+    monto_objetivo = mc3.number_input("Monto objetivo", min_value=0.0, step=10000.0, format="%.0f", key=f"meta_monto_{mfid}")
+    tiene_fecha = mc4.checkbox("Ponerle fecha limite", key=f"meta_tiene_fecha_{mfid}")
+    fecha_objetivo = (
+        st.date_input("Fecha limite", value=datetime.date.today(), key=f"meta_fecha_{mfid}") if tiene_fecha else None
+    )
+
+    if st.button("Crear meta", type="primary"):
+        if not nombre_meta.strip() or monto_objetivo <= 0:
+            st.error("Debes indicar un nombre y un monto objetivo mayor a 0.")
+        else:
+            agregar_meta(
+                nombre_meta.strip(),
+                monto_objetivo,
+                None if cuenta_meta == TOTAL_AHORROS else cuenta_meta,
+                fecha_objetivo,
+            )
+            st.success(f"Meta '{nombre_meta.strip()}' creada.")
+            st.session_state.meta_form_id += 1
+            st.rerun()
 
     metas = listar_metas()
     if metas:

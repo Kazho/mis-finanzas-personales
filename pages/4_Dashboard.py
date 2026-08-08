@@ -19,7 +19,7 @@ from src.analisis_gastos import (
     es_categoria_ahorro,
     ahorro_por_mes,
 )
-from src.metas import listar_metas, calcular_progreso
+from src.metas import listar_metas, calcular_progresos
 
 st.set_page_config(page_title="Dashboard", page_icon="\U0001F4C8", layout="wide")
 init_db()
@@ -201,23 +201,14 @@ with tab_ahorros:
     if df_ahorros.empty:
         st.info("Aun no registras ningun ahorro. Ve a 'Registrar Ahorro' para empezar.")
     else:
-        st.subheader("Donde tengo mis ahorros")
-
         ultimo_por_cuenta = df_ahorros.sort_values("fecha").groupby("cuenta").tail(1)
-        fig = px.pie(ultimo_por_cuenta, names="cuenta", values="saldo", title="Distribucion actual de ahorros por cuenta")
-        st.plotly_chart(fig, use_container_width=True)
-
-        fig = px.line(
-            df_ahorros, x="fecha", y="saldo", color="cuenta", markers=True, title="Evolucion del saldo de ahorros"
-        )
-        st.plotly_chart(fig, use_container_width=True)
 
         metas = listar_metas()
         if metas:
-            st.divider()
             st.subheader("Metas de ahorro")
+            progresos = calcular_progresos(metas, df_ahorros, df_trans, ultimo_por_cuenta)
             for m in metas:
-                p = calcular_progreso(m, df_ahorros, df_trans, ultimo_por_cuenta)
+                p = progresos[m["id"]]
                 alcance = m["cuenta"] or "total de tus ahorros"
                 titulo = f"**{m['nombre']}** ({alcance}) — {clp_md(p['monto_actual'])} de {clp_md(m['monto_objetivo'])}"
                 if p["cumplida"]:
@@ -235,6 +226,17 @@ with tab_ahorros:
                     if m["fecha_objetivo"]:
                         detalle += f" Fecha limite que pusiste: {m['fecha_objetivo']}."
                     st.caption(detalle)
+            st.caption(
+                "Si mas de una meta comparte el mismo alcance (ej. ambas al total de tus ahorros), la plata se "
+                "reparte entre ellas en orden — primero las con fecha limite mas proxima — para no contar el "
+                "mismo peso dos veces."
+            )
+            st.divider()
+
+        fig = px.line(
+            df_ahorros, x="fecha", y="saldo", color="cuenta", markers=True, title="Evolucion del saldo de ahorros"
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
         serie_ahorro = ahorro_por_mes(df_trans) if not df_trans.empty else pd.Series(dtype=float)
         if len(serie_ahorro) >= 1:
@@ -273,6 +275,11 @@ with tab_proyeccion:
     if ultimo_por_cuenta.empty:
         st.info("Aun no registras ningun ahorro. Ve a 'Registrar Ahorro' para empezar.")
     else:
+        st.subheader("Donde tengo mis ahorros")
+        fig = px.pie(ultimo_por_cuenta, names="cuenta", values="saldo", title="Distribucion actual de ahorros por cuenta")
+        st.plotly_chart(fig, use_container_width=True)
+        st.divider()
+
         config_tasas = listar_config()
         if not any(c.get("tasa_base") for c in config_tasas.values()):
             st.info("Configura una tasa de interes anual para tus cuentas en 'Registrar Ahorro' para ver la proyeccion aqui.")

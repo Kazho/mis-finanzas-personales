@@ -6,6 +6,9 @@ import pandas as pd
 from src.db import get_conn, init_db
 from src.proyeccion import listar_config, guardar_config
 from src.formato import clp, clp_md
+from src.metas import listar_metas, agregar_meta, eliminar_meta
+
+TOTAL_AHORROS = "Total de mis ahorros"
 
 st.set_page_config(page_title="Registrar Ahorro", page_icon="\U0001F4B5", layout="wide")
 init_db()
@@ -129,6 +132,47 @@ if cuentas_existentes:
                 costo_mensual=float(fila["costo_mensual_del_tope"]) if pd.notna(fila["costo_mensual_del_tope"]) else None,
             )
         st.success("Tasas guardadas. Ve al Dashboard para ver la proyeccion de ganancia estimada.")
+
+if cuentas_existentes:
+    st.divider()
+    st.subheader("Metas de ahorro")
+    st.caption(
+        "Define un monto objetivo (para el total de tus ahorros o para una cuenta especifica) y la app va a "
+        "mostrarte el avance y una fecha estimada de cumplimiento segun tu ritmo de ahorro reciente."
+    )
+
+    with st.form("form_meta", clear_on_submit=True):
+        mc1, mc2 = st.columns(2)
+        nombre_meta = mc1.text_input("Nombre de la meta (ej: Pie departamento, Viaje)")
+        cuenta_meta = mc2.selectbox("Aplica a", [TOTAL_AHORROS] + cuentas_existentes)
+        mc3, mc4 = st.columns(2)
+        monto_objetivo = mc3.number_input("Monto objetivo", min_value=0.0, step=10000.0, format="%.0f")
+        tiene_fecha = mc4.checkbox("Ponerle fecha limite")
+        fecha_objetivo = st.date_input("Fecha limite", value=datetime.date.today()) if tiene_fecha else None
+
+        if st.form_submit_button("Crear meta", type="primary"):
+            if not nombre_meta.strip() or monto_objetivo <= 0:
+                st.error("Debes indicar un nombre y un monto objetivo mayor a 0.")
+            else:
+                agregar_meta(
+                    nombre_meta.strip(),
+                    monto_objetivo,
+                    None if cuenta_meta == TOTAL_AHORROS else cuenta_meta,
+                    fecha_objetivo,
+                )
+                st.success(f"Meta '{nombre_meta.strip()}' creada.")
+                st.rerun()
+
+    metas = listar_metas()
+    if metas:
+        with st.expander("Eliminar una meta"):
+            opciones_meta = {f"{m['nombre']} ({clp(m['monto_objetivo'])})": m["id"] for m in metas}
+            elegida = st.selectbox("Selecciona la meta a eliminar", list(opciones_meta.keys()))
+            if st.button("Eliminar meta", type="secondary"):
+                eliminar_meta(opciones_meta[elegida])
+                st.success("Meta eliminada.")
+                st.rerun()
+    st.caption("El avance de cada meta se ve en el Dashboard, pestaña Ahorros.")
 
 st.subheader("Historico registrado")
 if snapshots.empty:

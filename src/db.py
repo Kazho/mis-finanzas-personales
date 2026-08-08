@@ -84,6 +84,16 @@ CREATE TABLE IF NOT EXISTS ahorros_config (
     tasa_premium REAL,
     costo_mensual REAL
 );
+
+CREATE TABLE IF NOT EXISTS metas_ahorro (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT NOT NULL,
+    monto_objetivo REAL NOT NULL,
+    cuenta TEXT,
+    fecha_objetivo TEXT,
+    fecha_creacion TEXT NOT NULL,
+    completada INTEGER NOT NULL DEFAULT 0
+);
 """
 
 MIGRACIONES = [

@@ -19,6 +19,7 @@ from src.analisis_gastos import (
     es_categoria_ahorro,
     ahorro_por_mes,
 )
+from src.metas import listar_metas, calcular_progreso
 
 st.set_page_config(page_title="Dashboard", page_icon="\U0001F4C8", layout="wide")
 init_db()
@@ -210,6 +211,30 @@ with tab_ahorros:
             df_ahorros, x="fecha", y="saldo", color="cuenta", markers=True, title="Evolucion del saldo de ahorros"
         )
         st.plotly_chart(fig, use_container_width=True)
+
+        metas = listar_metas()
+        if metas:
+            st.divider()
+            st.subheader("Metas de ahorro")
+            for m in metas:
+                p = calcular_progreso(m, df_ahorros, df_trans, ultimo_por_cuenta)
+                alcance = m["cuenta"] or "total de tus ahorros"
+                titulo = f"**{m['nombre']}** ({alcance}) — {clp_md(p['monto_actual'])} de {clp_md(m['monto_objetivo'])}"
+                if p["cumplida"]:
+                    st.success(f"{titulo} — meta cumplida! 🎉")
+                else:
+                    st.markdown(titulo)
+                    st.progress(min(p["porcentaje"], 100) / 100)
+                    detalle = f"{p['porcentaje']:.0f}% completado, faltan {clp_md(p['falta'])}."
+                    if p["fecha_estimada"]:
+                        detalle += f" A tu ritmo actual ({clp_md(p['ritmo_mensual'])}/mes), la alcanzarias en **{p['fecha_estimada'].strftime('%B %Y')}**."
+                    elif p["ritmo_mensual"] is not None and p["ritmo_mensual"] <= 0:
+                        detalle += " Con tu ritmo actual (no estas ahorrando o el saldo esta bajando) no vas a llegar; aumenta lo que destinas cada mes."
+                    else:
+                        detalle += " Aun no hay suficiente historial para estimar una fecha."
+                    if m["fecha_objetivo"]:
+                        detalle += f" Fecha limite que pusiste: {m['fecha_objetivo']}."
+                    st.caption(detalle)
 
         serie_ahorro = ahorro_por_mes(df_trans) if not df_trans.empty else pd.Series(dtype=float)
         if len(serie_ahorro) >= 1:

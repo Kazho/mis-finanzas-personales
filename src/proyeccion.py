@@ -10,6 +10,8 @@ ganar la tasa_premium (la tasa normal, sin costo) sobre todo el saldo", y se
 usa la que convenga mas segun el saldo actual. Asi, con saldos chicos donde el
 costo no se justifica, la proyeccion automaticamente recomienda no pagar el plan.
 """
+import datetime
+
 from src.db import get_conn
 
 
@@ -105,6 +107,50 @@ def tasa_efectiva(saldo: float, config: dict | None) -> float:
     if not saldo or not config:
         return 0.0
     return calcular_ganancia_anual(saldo, config) / saldo * 100
+
+
+def meses_entre(desde: datetime.date, hasta: datetime.date) -> int:
+    """Meses completos entre dos fechas (redondeando hacia arriba), minimo 0."""
+    dias = (hasta - desde).days
+    if dias <= 0:
+        return 0
+    return max(1, round(dias / 30.44))
+
+
+def proyectar_saldo(saldo_inicial: float, config: dict | None, ritmo_mensual: float | None, meses: int) -> dict:
+    """Simula mes a mes el saldo de una cuenta hasta una fecha, sumando aportes estimados
+    (segun el ritmo de ahorro reciente) y el interes de cada mes segun la tasa configurada.
+
+    Se hace mes a mes (no con una formula cerrada) porque asi el interes se recalcula sobre el
+    saldo que va creciendo con los aportes, y si la cuenta tiene tramos (ej. plan premium con
+    tope), el mes en que el saldo cruza el tope tambien queda bien reflejado.
+    """
+    saldo = saldo_inicial
+    total_aportado = 0.0
+    total_intereses = 0.0
+    aporte = ritmo_mensual or 0.0
+
+    for _ in range(meses):
+        if aporte > 0:
+            saldo += aporte
+            total_aportado += aporte
+        interes_mes = calcular_ganancia_anual(saldo, config) / 12
+        saldo += interes_mes
+        total_intereses += interes_mes
+
+    return {
+        "saldo_proyectado": saldo,
+        "total_aportado": total_aportado,
+        "total_intereses": total_intereses,
+        "meses": meses,
+    }
+
+
+def simular_dap(monto: float, tasa_anual_pct: float, dias: int) -> dict:
+    """Simula un Deposito a Plazo (DAP) con interes simple sobre el plazo, como muestran la
+    mayoria de los simuladores de bancos chilenos (base 365 dias)."""
+    ganancia = monto * (tasa_anual_pct / 100) * (dias / 365)
+    return {"monto_inicial": monto, "ganancia": ganancia, "monto_final": monto + ganancia, "dias": dias}
 
 
 def optimizar_asignacion(total: float, config_por_cuenta: dict[str, dict]) -> list[dict]:

@@ -1,3 +1,5 @@
+import datetime
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -9,6 +11,9 @@ from src.proyeccion import (
     tasa_efectiva,
     optimizar_asignacion,
     evaluar_plan_con_costo,
+    proyectar_saldo,
+    meses_entre,
+    simular_dap,
 )
 from src.formato import clp, clp_md
 from src.analisis_gastos import (
@@ -19,7 +24,7 @@ from src.analisis_gastos import (
     es_categoria_ahorro,
     ahorro_por_mes,
 )
-from src.metas import listar_metas, calcular_progresos
+from src.metas import listar_metas, calcular_progresos, ritmo_mensual_cuenta
 
 st.set_page_config(page_title="Dashboard", page_icon="\U0001F4C8", layout="wide")
 init_db()
@@ -318,6 +323,68 @@ with tab_proyeccion:
                     "Estimacion simple con interes sobre el saldo actual; no considera aportes, retiros ni cambios de tasa futuros."
                 )
 
+                st.divider()
+                st.subheader("Proyeccion a una fecha")
+                st.caption(
+                    "Elige una fecha y estima cuanto tendrias ahorrado y cuanto seria intereses, si las tasas se "
+                    "mantienen y sigues aportando a tu ritmo reciente de cada cuenta (mes a mes, no lineal, para "
+                    "reflejar bien los tramos con tope)."
+                )
+                fecha_proyeccion = st.date_input(
+                    "Proyectar hasta",
+                    value=datetime.date.today() + datetime.timedelta(days=365),
+                    min_value=datetime.date.today() + datetime.timedelta(days=1),
+                )
+                meses_proy = meses_entre(datetime.date.today(), fecha_proyeccion)
+
+                filas_proy_fecha = []
+                for _, fila in ultimo_por_cuenta.iterrows():
+                    cfg = config_tasas.get(fila["cuenta"])
+                    if not cfg or not cfg.get("tasa_base"):
+                        continue
+                    ritmo_cta = ritmo_mensual_cuenta(df_ahorros, fila["cuenta"])
+                    r = proyectar_saldo(fila["saldo"], cfg, ritmo_cta, meses_proy)
+                    filas_proy_fecha.append(
+                        {
+                            "cuenta": fila["cuenta"],
+                            "saldo_actual": fila["saldo"],
+                            "aporte_mensual_estimado": ritmo_cta or 0.0,
+                            "total_aportado": r["total_aportado"],
+                            "intereses_estimados": r["total_intereses"],
+                            "saldo_proyectado": r["saldo_proyectado"],
+                        }
+                    )
+
+                if not filas_proy_fecha:
+                    st.info("Ninguna de tus cuentas con saldo tiene una tasa configurada mayor a 0.")
+                else:
+                    df_proy_fecha = pd.DataFrame(filas_proy_fecha).sort_values("saldo_proyectado", ascending=False)
+                    df_proy_fecha_fmt = df_proy_fecha.copy()
+                    for col in ("saldo_actual", "aporte_mensual_estimado", "total_aportado", "intereses_estimados", "saldo_proyectado"):
+                        df_proy_fecha_fmt[col] = df_proy_fecha_fmt[col].apply(clp)
+                    st.dataframe(
+                        df_proy_fecha_fmt,
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "cuenta": "Cuenta",
+                            "saldo_actual": "Saldo actual",
+                            "aporte_mensual_estimado": "Aporte mensual estimado",
+                            "total_aportado": f"Total a aportar ({meses_proy} meses)",
+                            "intereses_estimados": "Intereses estimados",
+                            "saldo_proyectado": f"Saldo proyectado a {fecha_proyeccion}",
+                        },
+                    )
+                    st.metric(
+                        f"Total proyectado a {fecha_proyeccion}",
+                        clp(df_proy_fecha["saldo_proyectado"].sum()),
+                    )
+                    st.caption(
+                        "El aporte mensual estimado sale del crecimiento real de saldo de cada cuenta entre tu "
+                        "primer y ultimo registro; si una cuenta tiene poco historial, se asume que no seguiras "
+                        "aportando (solo se proyecta el interes)."
+                    )
+
                 planes_con_costo = []
                 for _, fila in ultimo_por_cuenta.iterrows():
                     cfg = config_tasas.get(fila["cuenta"])
@@ -377,6 +444,63 @@ with tab_proyeccion:
                         "cuenta con plan premium) y pone el resto en la siguiente mejor tasa disponible. No considera "
                         "topes que la app no te haya informado, asi que confirma las condiciones reales antes de mover dinero."
                     )
+
+            st.divider()
+            st.subheader("¿DAP o dejarlo en una cuenta fintech?")
+            st.caption(
+                "Ingresa el monto, tasa y plazo que te dio el simulador del banco para tu Deposito a Plazo (DAP), "
+                "y lo comparamos contra dejar el mismo monto ese mismo plazo en tus cuentas configuradas. Esto es "
+                "solo una calculadora — si terminas abriendo el DAP, puedes agregarlo como una cuenta mas en "
+                "'Registrar Ahorro' (igual que Mach o Tenpo) para seguirle la pista."
+            )
+
+            dc1, dc2, dc3 = st.columns(3)
+            monto_dap = dc1.number_input("Monto a depositar", min_value=0.0, step=100000.0, format="%.0f", key="dap_monto")
+            tasa_dap = dc2.number_input("Tasa anual del DAP (%)", min_value=0.0, step=0.1, format="%.2f", key="dap_tasa")
+            plazo_dap = dc3.number_input("Plazo (dias)", min_value=1, step=1, value=90, key="dap_plazo")
+
+            if monto_dap > 0 and tasa_dap > 0:
+                opciones_comparar = [
+                    {
+                        "opcion": f"DAP ({tasa_dap:.2f}% anual)",
+                        **simular_dap(monto_dap, tasa_dap, int(plazo_dap)),
+                    }
+                ]
+                for cuenta, cfg in config_tasas.items():
+                    if not cfg or not cfg.get("tasa_base"):
+                        continue
+                    ganancia = calcular_ganancia_anual(monto_dap, cfg) * (plazo_dap / 365)
+                    opciones_comparar.append(
+                        {
+                            "opcion": cuenta,
+                            "monto_inicial": monto_dap,
+                            "ganancia": ganancia,
+                            "monto_final": monto_dap + ganancia,
+                            "dias": plazo_dap,
+                        }
+                    )
+
+                df_comparar = pd.DataFrame(opciones_comparar).sort_values("ganancia", ascending=False)
+                mejor = df_comparar.iloc[0]
+                st.success(
+                    f"Con **{clp_md(monto_dap)}** a **{int(plazo_dap)} dias**, lo que mas te conviene es "
+                    f"**{mejor['opcion']}**: terminarias con **{clp_md(mejor['monto_final'])}** "
+                    f"(**{clp_md(mejor['ganancia'])}** de ganancia)."
+                )
+                df_comparar_fmt = df_comparar[["opcion", "ganancia", "monto_final"]].copy()
+                df_comparar_fmt["ganancia"] = df_comparar_fmt["ganancia"].apply(clp)
+                df_comparar_fmt["monto_final"] = df_comparar_fmt["monto_final"].apply(clp)
+                st.dataframe(
+                    df_comparar_fmt,
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={"opcion": "Opcion", "ganancia": "Ganancia", "monto_final": "Monto final"},
+                )
+                st.caption(
+                    "El DAP usa interes simple sobre el plazo (como los simuladores de los bancos). Las cuentas "
+                    "fintech se calculan con su tasa configurada, prorrateada al mismo plazo — en la practica esas "
+                    "cuentas suelen componer mes a mes, asi que podrian rendir un poco mas de lo que muestra esta tabla."
+                )
 
 # --- Deuda CMF ---
 with tab_deuda:

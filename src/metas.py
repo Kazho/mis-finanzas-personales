@@ -42,7 +42,7 @@ def eliminar_meta(meta_id: int):
         conn.execute("DELETE FROM metas_ahorro WHERE id = ?", (meta_id,))
 
 
-def _ritmo_mensual_cuenta(df_ahorros: pd.DataFrame, cuenta: str) -> float | None:
+def ritmo_mensual_cuenta(df_ahorros: pd.DataFrame, cuenta: str) -> float | None:
     df = df_ahorros[df_ahorros["cuenta"] == cuenta].sort_values("fecha")
     if len(df) < 2:
         return None
@@ -53,7 +53,7 @@ def _ritmo_mensual_cuenta(df_ahorros: pd.DataFrame, cuenta: str) -> float | None
     return (ultimo["saldo"] - primero["saldo"]) / meses
 
 
-def _ritmo_mensual_total(df_trans: pd.DataFrame) -> float | None:
+def ritmo_mensual_total(df_trans: pd.DataFrame) -> float | None:
     from src.analisis_gastos import ahorro_por_mes
 
     if df_trans.empty:
@@ -85,10 +85,10 @@ def calcular_progresos(
         if cuenta:
             fila = ultimo_por_cuenta[ultimo_por_cuenta["cuenta"] == cuenta]
             pool_actual = float(fila["saldo"].iloc[0]) if not fila.empty else 0.0
-            ritmo = _ritmo_mensual_cuenta(df_ahorros, cuenta)
+            ritmo = ritmo_mensual_cuenta(df_ahorros, cuenta)
         else:
             pool_actual = float(ultimo_por_cuenta["saldo"].sum()) if not ultimo_por_cuenta.empty else 0.0
-            ritmo = _ritmo_mensual_total(df_trans)
+            ritmo = ritmo_mensual_total(df_trans)
 
         metas_ordenadas = sorted(
             metas_grupo,

@@ -84,8 +84,8 @@ with tab_gastos:
             st.subheader(f"Este mes ({comp['mes_actual']}) vs el anterior ({comp['mes_anterior']})")
             delta_txt = f"{comp['porcentaje']:+.1f}% vs mes anterior" if comp["porcentaje"] is not None else None
             cm1, cm2 = st.columns(2)
-            cm1.metric(f"Gasto en {comp['mes_actual']}", clp(comp["gasto_actual"]), delta=delta_txt, delta_color="inverse")
-            cm2.metric(f"Gasto en {comp['mes_anterior']}", clp(comp["gasto_anterior"]))
+            cm1.metric(f"Gasto en {comp['mes_anterior']}", clp(comp["gasto_anterior"]))
+            cm2.metric(f"Gasto en {comp['mes_actual']}", clp(comp["gasto_actual"]), delta=delta_txt, delta_color="inverse")
 
             comp_cat = comparacion_por_categoria(df_trans)
             if not comp_cat.empty:
@@ -95,6 +95,7 @@ with tab_gastos:
                     y="monto_cargo",
                     color="mes",
                     barmode="group",
+                    category_orders={"mes": [comp["mes_anterior"], comp["mes_actual"]]},
                     title="Gasto por categoria: este mes vs el anterior",
                 )
                 st.plotly_chart(fig, use_container_width=True)
@@ -223,8 +224,8 @@ with tab_ahorros:
                 pct_a = (diferencia_a / anterior_a * 100) if anterior_a else None
                 delta_txt_a = f"{pct_a:+.1f}% vs mes anterior" if pct_a is not None else None
                 ca1, ca2 = st.columns(2)
-                ca1.metric(f"Ahorrado en {mes_actual_a}", clp(actual_a), delta=delta_txt_a)
-                ca2.metric(f"Ahorrado en {mes_anterior_a}", clp(anterior_a))
+                ca1.metric(f"Ahorrado en {mes_anterior_a}", clp(anterior_a))
+                ca2.metric(f"Ahorrado en {mes_actual_a}", clp(actual_a), delta=delta_txt_a)
             else:
                 st.metric(f"Ahorrado en {serie_ahorro.index[-1]}", clp(serie_ahorro.iloc[-1]))
 

@@ -122,6 +122,12 @@ def parse_movimientos(path: str) -> dict:
         )
         transacciones.append(t)
 
+    # El PDF las lista de la mas reciente a la mas antigua; se invierte para que queden en
+    # orden cronologico ascendente, igual que la cartola oficial. Esto importa para saber cual
+    # es realmente "la ultima transaccion" cuando dos movimientos caen el mismo dia (la fecha
+    # sola no alcanza para distinguirlas, pero el orden de insercion si).
+    transacciones.reverse()
+
     return {
         "banco": "Banco de Chile",
         "numero_cuenta": numero_cuenta,

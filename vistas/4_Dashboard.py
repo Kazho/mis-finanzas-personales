@@ -42,9 +42,9 @@ with st.expander("\U0001F504 Actualizar datos"):
 with get_conn() as conn:
     df_trans = pd.read_sql_query(
         """
-        SELECT t.fecha, t.descripcion, t.sucursal, t.monto_cargo, t.monto_abono, t.saldo, t.categoria, c.nombre AS cuenta
+        SELECT t.id, t.fecha, t.descripcion, t.sucursal, t.monto_cargo, t.monto_abono, t.saldo, t.categoria, c.nombre AS cuenta
         FROM transacciones t JOIN cuentas c ON c.id = t.cuenta_id
-        ORDER BY t.fecha
+        ORDER BY t.fecha, t.id
         """,
         conn,
     )

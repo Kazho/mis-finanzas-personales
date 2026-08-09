@@ -359,6 +359,22 @@ with tab_proyeccion:
                     st.info("Ninguna de tus cuentas con saldo tiene una tasa configurada mayor a 0.")
                 else:
                     df_proy_fecha = pd.DataFrame(filas_proy_fecha).sort_values("saldo_proyectado", ascending=False)
+
+                    total_actual = df_proy_fecha["saldo_actual"].sum()
+                    total_aportado = df_proy_fecha["total_aportado"].sum()
+                    total_intereses = df_proy_fecha["intereses_estimados"].sum()
+                    total_proyectado = df_proy_fecha["saldo_proyectado"].sum()
+
+                    pm1, pm2, pm3, pm4 = st.columns(4)
+                    pm1.metric("Saldo inicial (hoy)", clp(total_actual))
+                    pm2.metric(f"A aportar ({meses_proy} meses)", clp(total_aportado))
+                    pm3.metric("Ganancia (intereses)", clp(total_intereses))
+                    pm4.metric(
+                        f"Saldo final a {fecha_proyeccion}",
+                        clp(total_proyectado),
+                        delta=clp(total_proyectado - total_actual),
+                    )
+
                     df_proy_fecha_fmt = df_proy_fecha.copy()
                     for col in ("saldo_actual", "aporte_mensual_estimado", "total_aportado", "intereses_estimados", "saldo_proyectado"):
                         df_proy_fecha_fmt[col] = df_proy_fecha_fmt[col].apply(clp)
@@ -374,10 +390,6 @@ with tab_proyeccion:
                             "intereses_estimados": "Intereses estimados",
                             "saldo_proyectado": f"Saldo proyectado a {fecha_proyeccion}",
                         },
-                    )
-                    st.metric(
-                        f"Total proyectado a {fecha_proyeccion}",
-                        clp(df_proy_fecha["saldo_proyectado"].sum()),
                     )
                     st.caption(
                         "El aporte mensual estimado sale del crecimiento real de saldo de cada cuenta entre tu "

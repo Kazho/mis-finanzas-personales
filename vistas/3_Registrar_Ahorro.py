@@ -10,7 +10,6 @@ from src.metas import listar_metas, agregar_meta, eliminar_meta
 
 TOTAL_AHORROS = "Total de mis ahorros"
 
-st.set_page_config(page_title="Registrar Ahorro", page_icon="\U0001F4B5", layout="wide")
 init_db()
 
 st.title("Registrar Ahorro / Inversion")

@@ -8,7 +8,6 @@ from src.parser_movimientos import parse_movimientos, es_movimientos
 from src.categorias import categorizar, listar_categorias, asegurar_reglas_default
 from src.formato import clp
 
-st.set_page_config(page_title="Cargar Cartola", page_icon="\U0001F4C4", layout="wide")
 init_db()
 asegurar_reglas_default()
 

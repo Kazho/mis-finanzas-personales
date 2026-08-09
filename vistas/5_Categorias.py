@@ -14,7 +14,6 @@ from src.categorias import (
 )
 from src.formato import clp
 
-st.set_page_config(page_title="Reglas de Categorizacion", page_icon="\U0001F3F7️", layout="wide")
 init_db()
 
 st.title("Reglas de Categorizacion")

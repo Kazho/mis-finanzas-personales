@@ -5,7 +5,6 @@ from src.db import get_conn, init_db
 from src.parser_cmf import parse_cmf
 from src.formato import clp
 
-st.set_page_config(page_title="Cargar Deuda CMF", page_icon="\U0001F4CA", layout="wide")
 init_db()
 
 st.title("Cargar Informe de Deudas CMF")

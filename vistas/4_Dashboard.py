@@ -26,10 +26,18 @@ from src.analisis_gastos import (
 )
 from src.metas import listar_metas, calcular_progresos, ritmo_mensual_cuenta
 
-st.set_page_config(page_title="Dashboard", page_icon="\U0001F4C8", layout="wide")
 init_db()
 
 st.title("Dashboard Financiero")
+
+with st.expander("\U0001F504 Actualizar datos"):
+    au1, au2, au3 = st.columns(3)
+    if au1.button("\U0001F4C4 Cargar Cartola", use_container_width=True):
+        st.switch_page("vistas/1_Cargar_Cartola.py")
+    if au2.button("\U0001F4CA Cargar Deuda CMF", use_container_width=True):
+        st.switch_page("vistas/2_Cargar_Deuda_CMF.py")
+    if au3.button("\U0001F4B5 Registrar Ahorro", use_container_width=True):
+        st.switch_page("vistas/3_Registrar_Ahorro.py")
 
 with get_conn() as conn:
     df_trans = pd.read_sql_query(

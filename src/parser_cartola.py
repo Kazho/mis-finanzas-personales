@@ -9,11 +9,12 @@ verificacion.
 Las columnas se distinguen por la coordenada x0 de cada palabra (ver
 scratch_test.py usado durante el desarrollo para calibrar estos limites).
 """
-import hashlib
 import re
 from datetime import date
 
 import pdfplumber
+
+from src.dedupe import hash_transaccion
 
 COL_FECHA_MAX = 30
 COL_DESC_MAX = 230
@@ -75,7 +76,7 @@ def _fila_a_campos(fila):
 def _extraer_metadata(texto_completo: str) -> dict:
     meta = {}
     m = re.search(r"N\S* DE CUENTA\s*:\s*(\d+)", texto_completo)
-    meta["numero_cuenta"] = m.group(1) if m else None
+    meta["numero_cuenta"] = m.group(1).lstrip("0") if m else None
     m = re.search(r"CARTOLA N\S*\s*:\s*(\d+)", texto_completo)
     meta["cartola_numero"] = m.group(1) if m else None
     m = re.search(r"DESDE\s*:\s*(\d{2}/\d{2}/\d{4})\s+HASTA\s*:\s*(\d{2}/\d{2}/\d{4})", texto_completo)
@@ -144,7 +145,9 @@ def parse_cartola(path: str) -> dict:
         else:
             t["saldo"] = t["saldo_impreso"]
         del t["saldo_impreso"]
-        t["hash_dedupe"] = _hash_transaccion(meta, t)
+        t["hash_dedupe"] = hash_transaccion(
+            meta["numero_cuenta"], t["fecha"], t["descripcion"], t["monto_cargo"], t["monto_abono"], t["saldo"]
+        )
 
     cuadratura_ok = None
     if saldo_corriente is not None and saldo_final is not None:
@@ -161,25 +164,3 @@ def parse_cartola(path: str) -> dict:
         "cuadratura_ok": cuadratura_ok,
         "transacciones": transacciones,
     }
-
-
-def _hash_transaccion(meta: dict, t: dict) -> str:
-    # Se incluye el saldo corriente calculado (no solo fecha/descripcion/monto) porque
-    # dos transacciones distintas pueden tener exactamente los mismos campos visibles
-    # (mismo comercio, mismo monto, mismo dia) y no deben colapsarse en una sola fila;
-    # el saldo acumulado las distingue, y para un mismo PDF vuelto a subir es igual de
-    # deterministico, asi que la deteccion de duplicados real sigue funcionando.
-    base = "|".join(
-        str(x)
-        for x in (
-            meta["numero_cuenta"],
-            meta["cartola_numero"],
-            t["fecha"],
-            t["descripcion"],
-            t["sucursal"],
-            t["monto_cargo"],
-            t["monto_abono"],
-            t["saldo"],
-        )
-    )
-    return hashlib.sha256(base.encode("utf-8")).hexdigest()

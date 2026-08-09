@@ -2,7 +2,7 @@ import pdfplumber
 import streamlit as st
 import pandas as pd
 
-from src.db import get_conn, get_or_create_cuenta, init_db
+from src.db import get_conn, get_or_create_cuenta, guardar_saldo_snapshot, init_db
 from src.parser_cartola import parse_cartola
 from src.parser_movimientos import parse_movimientos, es_movimientos
 from src.categorias import categorizar, listar_categorias, asegurar_reglas_default
@@ -118,4 +118,15 @@ if archivo is not None:
                     nuevas += 1
                 else:
                     duplicadas += 1
+
+        # Fuera del "with" anterior: guardar_saldo_snapshot abre su propia conexion, y hacerlo
+        # mientras la conexion de arriba todavia tiene la transaccion abierta puede bloquear
+        # SQLite (solo permite un escritor a la vez).
+        if resultado["saldo_final"] is not None and resultado["saldo_disponible_fecha"] is not None:
+            guardar_saldo_snapshot(
+                cuenta_id,
+                resultado["saldo_disponible_fecha"].isoformat(),
+                resultado["saldo_disponible_hora"],
+                resultado["saldo_final"],
+            )
         st.success(f"Listo: {nuevas} transacciones nuevas guardadas, {duplicadas} ya existian y se omitieron.")

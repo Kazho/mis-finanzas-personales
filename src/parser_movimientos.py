@@ -90,6 +90,12 @@ def parse_movimientos(path: str) -> dict:
     m = re.search(r"Movimientos al (\d{2}/\d{2}/\d{4})", texto_completo)
     fecha_movimientos = _fecha(m.group(1)) if m else None
 
+    # "Saldo al DD/MM/YYYY HH:MM Hrs." trae la hora exacta en que el banco genero el PDF —
+    # mas preciso que "Movimientos al" para saber que tan actual es el saldo disponible.
+    m = re.search(r"Saldo al (\d{2}/\d{2}/\d{4}) (\d{2}:\d{2}) Hrs\.", texto_completo)
+    saldo_disponible_fecha = _fecha(m.group(1)) if m else fecha_movimientos
+    saldo_disponible_hora = m.group(2) if m else None
+
     # El PDF imprime primero las 4 etiquetas (Saldo Disponible, Saldo Contable,
     # Retenciones 24/48 Hrs.) y despues los 4 valores en el mismo orden, no una al lado
     # de la otra — el primer numero despues del bloque de etiquetas es el que corresponde
@@ -136,6 +142,8 @@ def parse_movimientos(path: str) -> dict:
         "periodo_hasta": fecha_movimientos,
         "saldo_inicial": None,
         "saldo_final": saldo_disponible,
+        "saldo_disponible_fecha": saldo_disponible_fecha,
+        "saldo_disponible_hora": saldo_disponible_hora,
         "cuadratura_ok": None,
         "transacciones": transacciones,
     }

@@ -161,6 +161,8 @@ def parse_cartola(path: str) -> dict:
         "periodo_hasta": hasta,
         "saldo_inicial": saldo_inicial,
         "saldo_final": saldo_final,
+        "saldo_disponible_fecha": hasta,
+        "saldo_disponible_hora": None,
         "cuadratura_ok": cuadratura_ok,
         "transacciones": transacciones,
     }

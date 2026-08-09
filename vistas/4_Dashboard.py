@@ -56,19 +56,42 @@ with get_conn() as conn:
         "SELECT fecha, cuenta, saldo, rentabilidad_generada FROM ahorros_snapshot ORDER BY fecha",
         conn,
     )
+    df_saldo_snapshot = pd.read_sql_query(
+        """
+        SELECT c.nombre AS cuenta, s.fecha, s.saldo
+        FROM saldo_snapshot s JOIN cuentas c ON c.id = s.cuenta_id
+        ORDER BY s.fecha
+        """,
+        conn,
+    )
 
 if df_trans.empty and df_deuda.empty and df_ahorros.empty:
     st.info("Aun no hay datos cargados. Ve a 'Cargar Cartola', 'Cargar Deuda CMF' o 'Registrar Ahorro' para empezar.")
     st.stop()
 
-for df, col in ((df_trans, "fecha"), (df_deuda, "fecha_actualizacion"), (df_ahorros, "fecha")):
+for df, col in ((df_trans, "fecha"), (df_deuda, "fecha_actualizacion"), (df_ahorros, "fecha"), (df_saldo_snapshot, "fecha")):
     if not df.empty:
         df[col] = pd.to_datetime(df[col])
 
 # --- Resumen general (siempre visible arriba, sin necesidad de cambiar de pestaña) ---
-saldo_cc_actual = (
-    df_trans.sort_values("fecha").groupby("cuenta").tail(1)["saldo"].sum() if not df_trans.empty else 0
+# El saldo actual se toma del dato mas reciente entre la ultima transaccion y el ultimo
+# "saldo disponible" guardado (de un PDF de movimientos): a veces el disponible cambia por
+# retenciones que no aparecen como una transaccion propiamente tal, y viceversa una cartola
+# nueva puede traer transacciones mas recientes que el ultimo saldo disponible guardado.
+_ultimo_trans = (
+    df_trans.sort_values("fecha").groupby("cuenta").tail(1)[["cuenta", "fecha", "saldo"]]
+    if not df_trans.empty
+    else pd.DataFrame(columns=["cuenta", "fecha", "saldo"])
 )
+_ultimo_snapshot = (
+    df_saldo_snapshot.sort_values("fecha").groupby("cuenta").tail(1)[["cuenta", "fecha", "saldo"]]
+    if not df_saldo_snapshot.empty
+    else pd.DataFrame(columns=["cuenta", "fecha", "saldo"])
+)
+_saldo_actual_por_cuenta = pd.concat([_ultimo_trans, _ultimo_snapshot])
+if not _saldo_actual_por_cuenta.empty:
+    _saldo_actual_por_cuenta = _saldo_actual_por_cuenta.sort_values("fecha").groupby("cuenta").tail(1)
+saldo_cc_actual = _saldo_actual_por_cuenta["saldo"].sum() if not _saldo_actual_por_cuenta.empty else 0
 ahorros_actual = (
     df_ahorros.sort_values("fecha").groupby("cuenta").tail(1)["saldo"].sum() if not df_ahorros.empty else 0
 )

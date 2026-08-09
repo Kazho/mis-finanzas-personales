@@ -94,6 +94,15 @@ CREATE TABLE IF NOT EXISTS metas_ahorro (
     fecha_creacion TEXT NOT NULL,
     completada INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS saldo_snapshot (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cuenta_id INTEGER NOT NULL REFERENCES cuentas(id),
+    fecha TEXT NOT NULL,
+    hora TEXT,
+    saldo REAL NOT NULL,
+    UNIQUE(cuenta_id, fecha, hora)
+);
 """
 
 MIGRACIONES = [
@@ -138,3 +147,21 @@ def get_or_create_cuenta(nombre: str, banco: str = None, numero_cuenta: str = No
             (nombre, banco, numero_cuenta),
         )
         return cur.lastrowid
+
+
+def guardar_saldo_snapshot(cuenta_id: int, fecha: str, hora: str | None, saldo: float):
+    """Guarda el saldo real de la cuenta a una fecha/hora dada (ej. 'Saldo Disponible' de un PDF
+    de movimientos, o el saldo final de una cartola), independiente de las transacciones — asi
+    el Dashboard puede reflejar retenciones u otros efectos que no aparecen como movimientos."""
+    # SQLite trata cada NULL como distinto en una restriccion UNIQUE (nunca choca consigo mismo),
+    # asi que se usa "" en vez de None para que el ON CONFLICT funcione cuando no hay hora
+    # (cartola oficial) y no se acumulen filas repetidas al volver a cargar el mismo documento.
+    hora = hora or ""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO saldo_snapshot (cuenta_id, fecha, hora, saldo) VALUES (?, ?, ?, ?)
+            ON CONFLICT(cuenta_id, fecha, hora) DO UPDATE SET saldo = excluded.saldo
+            """,
+            (cuenta_id, fecha, hora, saldo),
+        )

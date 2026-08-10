@@ -146,10 +146,18 @@ def proyectar_saldo(saldo_inicial: float, config: dict | None, ritmo_mensual: fl
     }
 
 
-def simular_dap(monto: float, tasa_anual_pct: float, dias: int) -> dict:
-    """Simula un Deposito a Plazo (DAP) con interes simple sobre el plazo, como muestran la
-    mayoria de los simuladores de bancos chilenos (base 365 dias)."""
-    ganancia = monto * (tasa_anual_pct / 100) * (dias / 365)
+def simular_dap(monto: float, tasa_pct: float, dias: int, tasa_es_anual: bool = False) -> dict:
+    """Simula un Deposito a Plazo (DAP).
+
+    La mayoria de los simuladores de bancos chilenos muestran la "tasa del periodo" (la tasa ya
+    calculada para el plazo completo, ej. "0,30% a 30 dias" — ahi la ganancia es directa:
+    monto * tasa). Si en vez de eso tienes una tasa anual, hay que prorratearla por los dias del
+    plazo (`tasa_es_anual=True`).
+    """
+    if tasa_es_anual:
+        ganancia = monto * (tasa_pct / 100) * (dias / 365)
+    else:
+        ganancia = monto * (tasa_pct / 100)
     return {"monto_inicial": monto, "ganancia": ganancia, "monto_final": monto + ganancia, "dias": dias}
 
 

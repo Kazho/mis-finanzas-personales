@@ -497,16 +497,28 @@ with tab_proyeccion:
                 "'Registrar Ahorro' (igual que Mach o Tenpo) para seguirle la pista."
             )
 
+            tipo_tasa_dap = st.radio(
+                "¿Que tasa te muestra el simulador del banco?",
+                ["Tasa del periodo (ej: '0,30% a 30 dias', la mas comun)", "Tasa anual"],
+                key="dap_tipo_tasa",
+                horizontal=True,
+            )
+            tasa_es_anual = tipo_tasa_dap == "Tasa anual"
+
             dc1, dc2, dc3 = st.columns(3)
             monto_dap = dc1.number_input("Monto a depositar", min_value=0.0, step=100000.0, format="%.0f", key="dap_monto")
-            tasa_dap = dc2.number_input("Tasa anual del DAP (%)", min_value=0.0, step=0.1, format="%.2f", key="dap_tasa")
+            tasa_dap = dc2.number_input(
+                "Tasa anual (%)" if tasa_es_anual else "Tasa del periodo (%)",
+                min_value=0.0, step=0.05, format="%.2f", key="dap_tasa",
+            )
             plazo_dap = dc3.number_input("Plazo (dias)", min_value=1, step=1, value=90, key="dap_plazo")
 
             if monto_dap > 0 and tasa_dap > 0:
+                etiqueta_tasa = f"{tasa_dap:.2f}% anual" if tasa_es_anual else f"{tasa_dap:.2f}% en {int(plazo_dap)} dias"
                 opciones_comparar = [
                     {
-                        "opcion": f"DAP ({tasa_dap:.2f}% anual)",
-                        **simular_dap(monto_dap, tasa_dap, int(plazo_dap)),
+                        "opcion": f"DAP ({etiqueta_tasa})",
+                        **simular_dap(monto_dap, tasa_dap, int(plazo_dap), tasa_es_anual=tasa_es_anual),
                     }
                 ]
                 for cuenta, cfg in config_tasas.items():

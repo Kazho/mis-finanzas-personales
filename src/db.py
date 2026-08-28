@@ -1,9 +1,24 @@
 """Acceso a la base de datos local (SQLite) del proyecto."""
+import os
 import sqlite3
+import sys
 from pathlib import Path
 from contextlib import contextmanager
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "finanzas.db"
+
+def _data_dir() -> Path:
+    """En la app empaquetada (PyInstaller) los datos van a una carpeta estable en
+    %LOCALAPPDATA%, separada de donde se instale/reinstale el programa, para que
+    actualizar o reinstalar la app nunca borre el historial financiero del usuario.
+    En modo desarrollo (python app.py / run.bat) se mantiene la carpeta del repo."""
+    if getattr(sys, "frozen", False):
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home()))
+        return base / "MisFinanzasPersonales" / "data"
+    return Path(__file__).resolve().parent.parent / "data"
+
+
+DATA_DIR = _data_dir()
+DB_PATH = DATA_DIR / "finanzas.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cuentas (
@@ -103,6 +118,22 @@ CREATE TABLE IF NOT EXISTS saldo_snapshot (
     saldo REAL NOT NULL,
     UNIQUE(cuenta_id, fecha, hora)
 );
+
+CREATE TABLE IF NOT EXISTS ahorro_cuenta_tipo (
+    cuenta TEXT PRIMARY KEY,
+    tipo TEXT NOT NULL DEFAULT 'ahorro'
+);
+
+CREATE TABLE IF NOT EXISTS tarjeta_config (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    tipo_tarjeta TEXT,
+    dia_corte INTEGER,
+    dia_pago INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS categorias_extra (
+    nombre TEXT PRIMARY KEY
+);
 """
 
 MIGRACIONES = [
@@ -111,6 +142,11 @@ MIGRACIONES = [
         "transacciones",
         "categoria_manual",
         "ALTER TABLE transacciones ADD COLUMN categoria_manual INTEGER NOT NULL DEFAULT 0",
+    ),
+    (
+        "ahorros_config",
+        "abono_mensual",
+        "ALTER TABLE ahorros_config ADD COLUMN abono_mensual INTEGER NOT NULL DEFAULT 0",
     ),
 ]
 
@@ -132,6 +168,8 @@ def init_db():
     with get_conn() as conn:
         conn.executescript(SCHEMA)
         for tabla, columna, alter in MIGRACIONES:
+            if not tabla.isidentifier():
+                raise ValueError(f"Nombre de tabla invalido en MIGRACIONES: {tabla!r}")
             columnas = {r["name"] for r in conn.execute(f"PRAGMA table_info({tabla})").fetchall()}
             if columna not in columnas:
                 conn.execute(alter)
@@ -147,6 +185,45 @@ def get_or_create_cuenta(nombre: str, banco: str = None, numero_cuenta: str = No
             (nombre, banco, numero_cuenta),
         )
         return cur.lastrowid
+
+
+def obtener_tipos_cuenta() -> dict[str, str]:
+    """Devuelve {cuenta: 'ahorro'|'movimiento'} para las cuentas de ahorro que ya tienen tipo marcado.
+    Las que no aparecen aqui se asumen 'ahorro' (plata quieta) por defecto."""
+    with get_conn() as conn:
+        rows = conn.execute("SELECT cuenta, tipo FROM ahorro_cuenta_tipo").fetchall()
+    return {r["cuenta"]: r["tipo"] for r in rows}
+
+
+def guardar_tipo_cuenta(cuenta: str, tipo: str):
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO ahorro_cuenta_tipo (cuenta, tipo) VALUES (?, ?)
+            ON CONFLICT(cuenta) DO UPDATE SET tipo = excluded.tipo
+            """,
+            (cuenta, tipo),
+        )
+
+
+def obtener_config_tarjeta() -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM tarjeta_config WHERE id = 1").fetchone()
+    return dict(row) if row else None
+
+
+def guardar_config_tarjeta(tipo_tarjeta: str, dia_corte: int, dia_pago: int):
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO tarjeta_config (id, tipo_tarjeta, dia_corte, dia_pago) VALUES (1, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                tipo_tarjeta = excluded.tipo_tarjeta,
+                dia_corte = excluded.dia_corte,
+                dia_pago = excluded.dia_pago
+            """,
+            (tipo_tarjeta, dia_corte, dia_pago),
+        )
 
 
 def guardar_saldo_snapshot(cuenta_id: int, fecha: str, hora: str | None, saldo: float):

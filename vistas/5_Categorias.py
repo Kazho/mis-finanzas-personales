@@ -1,3 +1,5 @@
+import sqlite3
+
 import streamlit as st
 import pandas as pd
 
@@ -5,10 +7,16 @@ from src.db import init_db
 from src.categorias import (
     listar_reglas,
     agregar_regla,
+    actualizar_regla,
     eliminar_regla,
     recategorizar_todas,
     listar_categorias,
+    listar_categorias_extra,
+    agregar_categoria,
+    eliminar_categoria_extra,
     listar_transacciones_sin_categoria,
+    listar_meses_transacciones,
+    listar_transacciones_por_mes,
     actualizar_categoria_transaccion,
     SIN_CATEGORIA,
 )
@@ -60,6 +68,78 @@ else:
             st.warning("No cambiaste ninguna categoria.")
 
 st.divider()
+st.subheader("Ajustar la categoria de una transaccion ya categorizada")
+meses = listar_meses_transacciones()
+if not meses:
+    st.info("Aun no tienes transacciones cargadas.")
+else:
+    mes_elegido = st.selectbox("Mes", meses, key="mes_ajustar_categoria")
+    trans_mes = listar_transacciones_por_mes(mes_elegido)
+    st.caption(
+        f"{len(trans_mes)} transacciones en {mes_elegido}. Cambia la categoria que corresponda y "
+        "presiona 'Guardar ajustes'."
+    )
+    df_mes = pd.DataFrame(trans_mes)
+    df_mes["monto_cargo"] = df_mes["monto_cargo"].apply(clp)
+    df_mes["monto_abono"] = df_mes["monto_abono"].apply(clp)
+
+    editado_mes = st.data_editor(
+        df_mes,
+        hide_index=True,
+        use_container_width=True,
+        disabled=["id", "fecha", "descripcion", "sucursal", "monto_cargo", "monto_abono", "cuenta"],
+        column_config={
+            "id": None,
+            "monto_cargo": "cargo",
+            "monto_abono": "abono",
+            "categoria": st.column_config.SelectboxColumn("categoria", options=listar_categorias()),
+        },
+        key=f"editor_ajustar_{mes_elegido}",
+    )
+
+    if st.button("Guardar ajustes", type="primary", key="guardar_ajustes_categoria"):
+        cambios = 0
+        for fila_original, (_, fila_editada) in zip(trans_mes, editado_mes.iterrows()):
+            if fila_editada["categoria"] != fila_original["categoria"]:
+                actualizar_categoria_transaccion(int(fila_editada["id"]), fila_editada["categoria"])
+                cambios += 1
+        if cambios:
+            st.success(f"Se ajusto la categoria de {cambios} transacciones.")
+            st.rerun()
+        else:
+            st.warning("No cambiaste ninguna categoria.")
+
+st.divider()
+st.subheader("Crear una categoria nueva (sin regla)")
+st.caption(
+    "Usa esto cuando quieras tener una categoria disponible para asignar a mano, sin que "
+    "quede ligada a ninguna palabra clave (o sea, no categorizara nada automaticamente)."
+)
+cn1, cn2 = st.columns([3, 1])
+nombre_cat_nueva = cn1.text_input("Nombre de la categoria", key="nombre_categoria_nueva")
+if cn2.button("Crear categoria", key="crear_categoria_nueva"):
+    if not nombre_cat_nueva.strip():
+        st.error("Debes indicar un nombre.")
+    else:
+        agregar_categoria(nombre_cat_nueva)
+        st.success(f"Categoria '{nombre_cat_nueva.strip()}' creada.")
+        st.rerun()
+
+categorias_extra = listar_categorias_extra()
+if categorias_extra:
+    with st.expander("Eliminar una categoria sin regla"):
+        st.caption(
+            "Solo se pueden eliminar aqui las categorias creadas de esta forma (sin regla). "
+            "Las transacciones que ya la tengan asignada mantienen el texto, pero dejara de "
+            "aparecer como opcion para asignar a nuevas."
+        )
+        elegida_extra = st.selectbox("Categoria a eliminar", categorias_extra, key="categoria_extra_eliminar")
+        if st.button("Eliminar categoria", type="secondary", key="eliminar_categoria_extra_btn"):
+            eliminar_categoria_extra(elegida_extra)
+            st.success("Categoria eliminada.")
+            st.rerun()
+
+st.divider()
 st.subheader("Reglas de categorizacion automatica")
 st.caption(
     "Cuando una transaccion contiene la palabra clave (busqueda simple, sin distinguir mayusculas), "
@@ -98,8 +178,43 @@ reglas = listar_reglas()
 if not reglas:
     st.info("Aun no hay reglas configuradas.")
 else:
-    df = pd.DataFrame(reglas)
-    st.dataframe(df[["palabra_clave", "categoria"]], hide_index=True, use_container_width=True)
+    st.caption(
+        "Puedes editar la palabra clave o la categoria directamente en la tabla y presionar "
+        "'Guardar cambios a las reglas' — no hace falta eliminar la regla y crearla de nuevo."
+    )
+    df_reglas = pd.DataFrame(reglas)
+    editado_reglas = st.data_editor(
+        df_reglas,
+        hide_index=True,
+        use_container_width=True,
+        disabled=["id"],
+        column_config={
+            "id": None,
+            "palabra_clave": "palabra clave",
+            "categoria": st.column_config.SelectboxColumn("categoria", options=listar_categorias()[:-1]),
+        },
+        key="editor_reglas",
+    )
+
+    if st.button("Guardar cambios a las reglas", key="guardar_cambios_reglas"):
+        cambios = 0
+        errores = []
+        for fila_original, (_, fila_editada) in zip(reglas, editado_reglas.iterrows()):
+            nueva_palabra = str(fila_editada["palabra_clave"]).strip().upper()
+            nueva_categoria = str(fila_editada["categoria"]).strip()
+            if nueva_palabra != fila_original["palabra_clave"] or nueva_categoria != fila_original["categoria"]:
+                try:
+                    actualizar_regla(int(fila_original["id"]), nueva_palabra, nueva_categoria)
+                    cambios += 1
+                except sqlite3.IntegrityError:
+                    errores.append(fila_original["palabra_clave"])
+        if errores:
+            st.error(f"Ya existe otra regla con esa palabra clave, no se pudo guardar: {', '.join(errores)}")
+        if cambios:
+            st.success(f"Se actualizaron {cambios} reglas.")
+            st.rerun()
+        elif not errores:
+            st.warning("No cambiaste ninguna regla.")
 
     with st.expander("Eliminar una regla"):
         opciones = {f"{r['palabra_clave']} -> {r['categoria']}": r["id"] for r in reglas}

@@ -98,9 +98,29 @@ def listar_categorias() -> list[str]:
         categorias |= {
             r["categoria"] for r in conn.execute("SELECT DISTINCT categoria FROM categoria_reglas").fetchall()
         }
+        categorias |= {r["nombre"] for r in conn.execute("SELECT nombre FROM categorias_extra").fetchall()}
     resultado = sorted(categorias)
     resultado.append(SIN_CATEGORIA)
     return resultado
+
+
+def agregar_categoria(nombre: str):
+    """Crea una categoria sin asociarla a ninguna palabra clave, para usarla solo al
+    categorizar transacciones a mano (no categoriza nada automaticamente)."""
+    nombre = nombre.strip()
+    with get_conn() as conn:
+        conn.execute("INSERT OR IGNORE INTO categorias_extra (nombre) VALUES (?)", (nombre,))
+
+
+def listar_categorias_extra() -> list[str]:
+    with get_conn() as conn:
+        rows = conn.execute("SELECT nombre FROM categorias_extra ORDER BY nombre").fetchall()
+    return [r["nombre"] for r in rows]
+
+
+def eliminar_categoria_extra(nombre: str):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM categorias_extra WHERE nombre = ?", (nombre,))
 
 
 def listar_reglas() -> list[dict]:
@@ -124,6 +144,18 @@ def agregar_regla(palabra_clave: str, categoria: str):
         )
 
 
+def actualizar_regla(regla_id: int, palabra_clave: str, categoria: str):
+    """Edita la palabra clave y/o categoria de una regla existente, sin tener que borrarla
+    y crear una nueva (evita perder el orden/id y tener que acordarse de recrearla)."""
+    palabra_clave = palabra_clave.strip().upper()
+    categoria = categoria.strip()
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE categoria_reglas SET palabra_clave = ?, categoria = ? WHERE id = ?",
+            (palabra_clave, categoria, regla_id),
+        )
+
+
 def eliminar_regla(regla_id: int):
     with get_conn() as conn:
         conn.execute("DELETE FROM categoria_reglas WHERE id = ?", (regla_id,))
@@ -139,6 +171,29 @@ def listar_transacciones_sin_categoria() -> list[dict]:
             ORDER BY t.fecha DESC
             """,
             (SIN_CATEGORIA,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def listar_meses_transacciones() -> list[str]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT substr(fecha, 1, 7) AS mes FROM transacciones ORDER BY mes DESC"
+        ).fetchall()
+    return [r["mes"] for r in rows]
+
+
+def listar_transacciones_por_mes(mes: str) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT t.id, t.fecha, t.descripcion, t.sucursal, t.monto_cargo, t.monto_abono, t.categoria,
+                   c.nombre AS cuenta
+            FROM transacciones t JOIN cuentas c ON c.id = t.cuenta_id
+            WHERE substr(t.fecha, 1, 7) = ?
+            ORDER BY t.fecha DESC
+            """,
+            (mes,),
         ).fetchall()
     return [dict(r) for r in rows]
 

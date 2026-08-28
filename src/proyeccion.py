@@ -1,5 +1,12 @@
 """Proyeccion de rentabilidad de cuentas de ahorro segun una tasa anual configurada.
 
+Las cuentas/fintech chilenas (Mach, Tenpo, Mercado Pago, Copec Pay, etc.) acreditan interes
+todos los dias sobre el saldo — y ese interes de ayer pasa a formar parte del saldo que genera
+el interes de hoy. Osea, la tasa que configuras es una tasa NOMINAL anual capitalizable a
+diario: la ganancia real en un año es mayor que "saldo * tasa/100" (interes simple), porque
+cada dia compone sobre lo ya ganado. Todas las funciones de este modulo parten de una tasa
+diaria (`tasa_anual / 365`) y componen dia a dia para el periodo que corresponda.
+
 Soporta una tasa simple, o una tasa en dos tramos (por ejemplo cuando la
 plataforma paga mas sobre cierto monto, o con un plan premium que hay que
 pagar mensualmente): el tramo hasta `monto_umbral` gana `tasa_base`, y lo que
@@ -13,6 +20,8 @@ costo no se justifica, la proyeccion automaticamente recomienda no pagar el plan
 import datetime
 
 from src.db import get_conn
+
+DIAS_ANIO = 365
 
 
 def obtener_config(cuenta: str) -> dict | None:
@@ -33,45 +42,83 @@ def guardar_config(
     monto_umbral: float | None,
     tasa_premium: float | None,
     costo_mensual: float | None = None,
+    abono_mensual: bool = False,
 ):
     with get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO ahorros_config (cuenta, tasa_base, monto_umbral, tasa_premium, costo_mensual)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO ahorros_config (cuenta, tasa_base, monto_umbral, tasa_premium, costo_mensual, abono_mensual)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(cuenta) DO UPDATE SET
                 tasa_base = excluded.tasa_base,
                 monto_umbral = excluded.monto_umbral,
                 tasa_premium = excluded.tasa_premium,
-                costo_mensual = excluded.costo_mensual
+                costo_mensual = excluded.costo_mensual,
+                abono_mensual = excluded.abono_mensual
             """,
-            (cuenta, tasa_base, monto_umbral, tasa_premium, costo_mensual),
+            (cuenta, tasa_base, monto_umbral, tasa_premium, costo_mensual, int(abono_mensual)),
         )
 
 
-def _ganancia_con_tramo(saldo: float, config: dict) -> float:
-    tasa_base = config["tasa_base"] / 100
-    umbral = config["monto_umbral"]
-    tramo_base = min(saldo, umbral)
-    tramo_extra = max(0.0, saldo - umbral)
-    costo_anual = (config.get("costo_mensual") or 0) * 12
-    return tramo_base * tasa_base + tramo_extra * (config["tasa_premium"] / 100) - costo_anual
+def _tasa_efectiva_periodo(tasa_anual_pct: float, dias: float, mensual: bool = False) -> float:
+    """Convierte una tasa nominal anual (%) en la ganancia efectiva (fraccion, no %) para un
+    periodo de `dias` dias.
+
+    Por defecto compone dia a dia: (1 + tasa_anual/365)^dias - 1, que es como funcionan la
+    mayoria de las cuentas fintech (el interes de ayer pasa a generar interes hoy).
+
+    Con `mensual=True` (para cuentas como Mach, que calculan el interes a diario pero recien
+    lo ABONAN al saldo los primeros dias del mes siguiente) se compone una vez por mes en vez
+    de dia a dia, porque el interes de este mes todavia no esta en el saldo y no genera
+    interes-sobre-interes hasta que se acredite."""
+    if mensual:
+        tasa_mensual = (tasa_anual_pct / 100) / 12
+        periodos = dias / (DIAS_ANIO / 12)
+        return (1 + tasa_mensual) ** periodos - 1
+    tasa_diaria = (tasa_anual_pct / 100) / DIAS_ANIO
+    return (1 + tasa_diaria) ** dias - 1
 
 
-def calcular_ganancia_anual(saldo: float, config: dict | None) -> float:
-    """Ganancia estimada en un año si el saldo se mantiene constante, con interes simple."""
+def _ganancia_con_tramo_periodo(saldo: float, config: dict, dias: float) -> float:
+    mensual = bool(config.get("abono_mensual"))
+    tramo_base = min(saldo, config["monto_umbral"])
+    tramo_extra = max(0.0, saldo - config["monto_umbral"])
+    costo_periodo = (config.get("costo_mensual") or 0) * 12 * (dias / DIAS_ANIO)
+    return (
+        tramo_base * _tasa_efectiva_periodo(config["tasa_base"], dias, mensual)
+        + tramo_extra * _tasa_efectiva_periodo(config["tasa_premium"], dias, mensual)
+        - costo_periodo
+    )
+
+
+def _ganancia_periodo(saldo: float, config: dict | None, dias: float) -> float:
+    """Ganancia estimada para un periodo de `dias` dias, componiendo dia a dia o mensualmente
+    segun la configuracion de la cuenta (ver `_tasa_efectiva_periodo`)."""
     if not config or not config.get("tasa_base"):
         return 0.0
 
     umbral = config.get("monto_umbral")
     tasa_premium = config.get("tasa_premium")
+    mensual = bool(config.get("abono_mensual"))
 
     if umbral is not None and tasa_premium is not None:
-        ganancia_sin_tramo = saldo * (tasa_premium / 100)
-        ganancia_con_tramo = _ganancia_con_tramo(saldo, config)
+        ganancia_sin_tramo = saldo * _tasa_efectiva_periodo(tasa_premium, dias, mensual)
+        ganancia_con_tramo = _ganancia_con_tramo_periodo(saldo, config, dias)
         return max(ganancia_con_tramo, ganancia_sin_tramo)
 
-    return saldo * (config["tasa_base"] / 100)
+    return saldo * _tasa_efectiva_periodo(config["tasa_base"], dias, mensual)
+
+
+def ganancia_periodo(saldo: float, config: dict | None, dias: float) -> float:
+    """Ganancia estimada si el saldo se mantiene constante durante `dias` dias, componiendo
+    el interes dia a dia (no es una simple regla de tres sobre la ganancia anual)."""
+    return _ganancia_periodo(saldo, config, dias)
+
+
+def calcular_ganancia_anual(saldo: float, config: dict | None) -> float:
+    """Ganancia estimada en un año si el saldo se mantiene constante, componiendo el interes
+    dia a dia (el interes de cada dia se suma al saldo y genera interes al dia siguiente)."""
+    return _ganancia_periodo(saldo, config, DIAS_ANIO)
 
 
 def evaluar_plan_con_costo(saldo: float, config: dict | None) -> dict | None:
@@ -84,13 +131,16 @@ def evaluar_plan_con_costo(saldo: float, config: dict | None) -> dict | None:
     if config.get("monto_umbral") is None or config.get("tasa_premium") is None:
         return None
 
-    ganancia_con = _ganancia_con_tramo(saldo, config)
-    ganancia_sin = saldo * (config["tasa_premium"] / 100)
+    mensual = bool(config.get("abono_mensual"))
+    ganancia_con = _ganancia_con_tramo_periodo(saldo, config, DIAS_ANIO)
+    tasa_normal_efectiva = _tasa_efectiva_periodo(config["tasa_premium"], DIAS_ANIO, mensual)
+    ganancia_sin = saldo * tasa_normal_efectiva
     costo_anual = config["costo_mensual"] * 12
-    tasa_base = config["tasa_base"] / 100
-    tasa_normal = config["tasa_premium"] / 100
+    tasa_base_efectiva = _tasa_efectiva_periodo(config["tasa_base"], DIAS_ANIO, mensual)
 
-    punto_equilibrio = costo_anual / (tasa_base - tasa_normal) if tasa_base > tasa_normal else None
+    punto_equilibrio = (
+        costo_anual / (tasa_base_efectiva - tasa_normal_efectiva) if tasa_base_efectiva > tasa_normal_efectiva else None
+    )
 
     return {
         "conviene_activar": ganancia_con > ganancia_sin,
@@ -103,7 +153,8 @@ def evaluar_plan_con_costo(saldo: float, config: dict | None) -> dict | None:
 
 
 def tasa_efectiva(saldo: float, config: dict | None) -> float:
-    """Tasa anual equivalente (%) resultante de aplicar la ganancia calculada sobre el saldo."""
+    """Tasa anual efectiva (%) resultante de aplicar la ganancia calculada (compuesta dia a
+    dia) sobre el saldo — va a ser un poco mas alta que la tasa nominal que configuraste."""
     if not saldo or not config:
         return 0.0
     return calcular_ganancia_anual(saldo, config) / saldo * 100
@@ -129,12 +180,13 @@ def proyectar_saldo(saldo_inicial: float, config: dict | None, ritmo_mensual: fl
     total_aportado = 0.0
     total_intereses = 0.0
     aporte = ritmo_mensual or 0.0
+    dias_por_mes = DIAS_ANIO / 12
 
     for _ in range(meses):
         if aporte > 0:
             saldo += aporte
             total_aportado += aporte
-        interes_mes = calcular_ganancia_anual(saldo, config) / 12
+        interes_mes = _ganancia_periodo(saldo, config, dias_por_mes)
         saldo += interes_mes
         total_intereses += interes_mes
 
@@ -152,7 +204,8 @@ def simular_dap(monto: float, tasa_pct: float, dias: int, tasa_es_anual: bool = 
     La mayoria de los simuladores de bancos chilenos muestran la "tasa del periodo" (la tasa ya
     calculada para el plazo completo, ej. "0,30% a 30 dias" — ahi la ganancia es directa:
     monto * tasa). Si en vez de eso tienes una tasa anual, hay que prorratearla por los dias del
-    plazo (`tasa_es_anual=True`).
+    plazo (`tasa_es_anual=True`). Un DAP no compone dentro del plazo (paga interes simple al
+    vencimiento), a diferencia de las cuentas fintech que se calculan con `ganancia_periodo`.
     """
     if tasa_es_anual:
         ganancia = monto * (tasa_pct / 100) * (dias / 365)
@@ -165,10 +218,11 @@ def optimizar_asignacion(total: float, config_por_cuenta: dict[str, dict]) -> li
     """Reparte `total` entre las cuentas configuradas para maximizar la ganancia anual.
 
     Cada cuenta aporta uno o dos "tramos" de tasa (base, y premium si tiene tope). Se listan
-    todos los tramos de todas las cuentas ordenados de mayor a menor tasa, y se llenan en ese
-    orden con el dinero disponible. Esto es optimo cuando los tramos no tienen costo fijo; si
-    una cuenta tiene un costo mensual asociado (plan premium), no se considera aqui — revisa
-    la seccion de "cuanto generaria si dejo la plata donde esta" para esos casos.
+    todos los tramos de todas las cuentas ordenados de mayor a menor tasa EFECTIVA (compuesta
+    dia a dia, no la nominal) y se llenan en ese orden con el dinero disponible. Esto es optimo
+    cuando los tramos no tienen costo fijo; si una cuenta tiene un costo mensual asociado (plan
+    premium), no se considera aqui — revisa la seccion de "cuanto generaria si dejo la plata
+    donde esta" para esos casos.
     """
     segmentos = []
     for cuenta, cfg in config_por_cuenta.items():
@@ -176,13 +230,32 @@ def optimizar_asignacion(total: float, config_por_cuenta: dict[str, dict]) -> li
             continue
         umbral = cfg.get("monto_umbral")
         tasa_premium = cfg.get("tasa_premium")
+        mensual = bool(cfg.get("abono_mensual"))
         if umbral is not None and tasa_premium is not None:
-            segmentos.append({"cuenta": cuenta, "tasa": cfg["tasa_base"], "capacidad": umbral})
-            segmentos.append({"cuenta": cuenta, "tasa": tasa_premium, "capacidad": float("inf")})
+            segmentos.append(
+                {
+                    "cuenta": cuenta,
+                    "tasa_efectiva": _tasa_efectiva_periodo(cfg["tasa_base"], DIAS_ANIO, mensual),
+                    "capacidad": umbral,
+                }
+            )
+            segmentos.append(
+                {
+                    "cuenta": cuenta,
+                    "tasa_efectiva": _tasa_efectiva_periodo(tasa_premium, DIAS_ANIO, mensual),
+                    "capacidad": float("inf"),
+                }
+            )
         else:
-            segmentos.append({"cuenta": cuenta, "tasa": cfg["tasa_base"], "capacidad": float("inf")})
+            segmentos.append(
+                {
+                    "cuenta": cuenta,
+                    "tasa_efectiva": _tasa_efectiva_periodo(cfg["tasa_base"], DIAS_ANIO, mensual),
+                    "capacidad": float("inf"),
+                }
+            )
 
-    segmentos.sort(key=lambda s: -s["tasa"])
+    segmentos.sort(key=lambda s: -s["tasa_efectiva"])
 
     restante = total
     asignacion: dict[str, dict] = {}
@@ -194,7 +267,7 @@ def optimizar_asignacion(total: float, config_por_cuenta: dict[str, dict]) -> li
             continue
         entrada = asignacion.setdefault(seg["cuenta"], {"monto_asignado": 0.0, "ganancia": 0.0})
         entrada["monto_asignado"] += monto
-        entrada["ganancia"] += monto * seg["tasa"] / 100
+        entrada["ganancia"] += monto * seg["tasa_efectiva"]
         restante -= monto
 
     resultado = [{"cuenta": c, **v} for c, v in asignacion.items()]

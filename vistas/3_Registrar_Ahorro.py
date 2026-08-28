@@ -3,7 +3,7 @@ import datetime
 import streamlit as st
 import pandas as pd
 
-from src.db import get_conn, init_db
+from src.db import get_conn, init_db, obtener_tipos_cuenta, guardar_tipo_cuenta
 from src.proyeccion import listar_config, guardar_config
 from src.formato import clp, clp_md
 from src.metas import listar_metas, agregar_meta, eliminar_meta
@@ -45,8 +45,18 @@ seleccion = col2.selectbox(
     "Cuenta / app", opciones, index=len(opciones) - 1 if not cuentas_existentes else 0, key=f"cuenta_sel_{fid}"
 )
 nueva_cuenta = ""
+tipo_nueva_cuenta = "ahorro"
 if seleccion == "+ Nueva cuenta":
     nueva_cuenta = st.text_input("Nombre de la cuenta nueva (ej: Tenpo, Mach, Fintual)", key=f"nueva_cuenta_{fid}")
+    tipo_label = st.radio(
+        "Tipo de cuenta",
+        [
+            "🔄 Movimiento (la usas seguido, entra y sale plata)",
+            "💰 Ahorro estatica (plata quieta, tipo bajo el colchon)",
+        ],
+        key=f"tipo_nueva_cuenta_{fid}",
+    )
+    tipo_nueva_cuenta = "movimiento" if tipo_label.startswith("🔄") else "ahorro"
 
 col3, col4 = st.columns(2)
 saldo = col3.number_input("Saldo total", min_value=0.0, step=1000.0, format="%.0f", key=f"saldo_{fid}")
@@ -72,6 +82,8 @@ if st.button("Guardar snapshot", type="primary"):
                 """,
                 (fecha.isoformat(), cuenta_final, saldo, rentabilidad or None, nota or None),
             )
+        if seleccion == "+ Nueva cuenta":
+            guardar_tipo_cuenta(cuenta_final, tipo_nueva_cuenta)
         st.success(f"Guardado: **{cuenta_final}** el {fecha} con saldo **{clp_md(saldo)}**")
         st.session_state.ahorro_form_id += 1
         st.rerun()
@@ -84,20 +96,26 @@ if cuentas_existentes:
         "cierto monto (por plan premium u otro motivo), completa tambien el monto tope y la tasa sobre ese tope; "
         "si no aplica, dejalos en blanco. Para cuentas que no generan rentabilidad (como una Cuenta RUT de gastos "
         "familiares) deja todo en 0. Si el tope corresponde a un plan pagado (como Mach Premium), completa tambien "
-        "el costo mensual: la app va a comparar sola si te conviene pagarlo segun tu saldo actual."
+        "el costo mensual: la app va a comparar sola si te conviene pagarlo segun tu saldo actual. Si la cuenta "
+        "recien ABONA el interes a tu saldo una vez al mes (como Mach, que paga los primeros dias del mes "
+        "siguiente) en vez de dia a dia, marca la casilla 'abona 1 vez al mes' para que la ganancia estimada "
+        "no asuma que compone a diario."
     )
 
     config_actual = listar_config()
+    tipos_actuales = obtener_tipos_cuenta()
     filas_config = []
     for cuenta in cuentas_existentes:
         c = config_actual.get(cuenta, {})
         filas_config.append(
             {
                 "cuenta": cuenta,
+                "tipo": "Movimiento" if tipos_actuales.get(cuenta, "ahorro") == "movimiento" else "Ahorro estatica",
                 "tasa_base_%": c.get("tasa_base") or 0.0,
                 "monto_tope": c.get("monto_umbral"),
                 "tasa_sobre_tope_%": c.get("tasa_premium"),
                 "costo_mensual_del_tope": c.get("costo_mensual"),
+                "abona_1_vez_al_mes": bool(c.get("abono_mensual")),
             }
         )
     df_config = pd.DataFrame(filas_config)
@@ -108,6 +126,7 @@ if cuentas_existentes:
         use_container_width=True,
         disabled=["cuenta"],
         column_config={
+            "tipo": st.column_config.SelectboxColumn("tipo de cuenta", options=["Movimiento", "Ahorro estatica"]),
             "tasa_base_%": st.column_config.NumberColumn("tasa hasta el tope %", min_value=0.0, step=0.1, format="%.2f"),
             "monto_tope": st.column_config.NumberColumn("monto tope (opcional)", min_value=0.0, step=10000.0),
             "tasa_sobre_tope_%": st.column_config.NumberColumn(
@@ -116,6 +135,7 @@ if cuentas_existentes:
             "costo_mensual_del_tope": st.column_config.NumberColumn(
                 "costo mensual del plan (opcional)", min_value=0.0, step=100.0
             ),
+            "abona_1_vez_al_mes": st.column_config.CheckboxColumn("abona 1 vez al mes (ej. Mach)"),
         },
         key="editor_config_tasas",
     )
@@ -129,8 +149,10 @@ if cuentas_existentes:
                 monto_umbral=float(fila["monto_tope"]) if tiene_tramo else None,
                 tasa_premium=float(fila["tasa_sobre_tope_%"]) if tiene_tramo else None,
                 costo_mensual=float(fila["costo_mensual_del_tope"]) if pd.notna(fila["costo_mensual_del_tope"]) else None,
+                abono_mensual=bool(fila["abona_1_vez_al_mes"]),
             )
-        st.success("Tasas guardadas. Ve al Dashboard para ver la proyeccion de ganancia estimada.")
+            guardar_tipo_cuenta(fila["cuenta"], "movimiento" if fila["tipo"] == "Movimiento" else "ahorro")
+        st.success("Tasas y tipo de cuenta guardados. Ve al Dashboard para ver la proyeccion de ganancia estimada.")
 
 if cuentas_existentes:
     st.divider()

@@ -2,6 +2,7 @@
 import pandas as pd
 
 CATEGORIAS_POSITIVAS = ("ahorro", "inversion", "inversión")
+CATEGORIAS_INGRESO = ("ingreso", "transferencia recibida")
 
 
 def es_categoria_ahorro(categoria: str) -> bool:
@@ -14,6 +15,17 @@ def es_categoria_ahorro(categoria: str) -> bool:
     return any(palabra in texto for palabra in CATEGORIAS_POSITIVAS)
 
 
+def es_categoria_ingreso(categoria: str) -> bool:
+    """Categorias que representan ingresos genuinos (sueldo, transferencias recibidas sin
+    asociar a un gasto propio), para no restarlas del gasto al netear cargos y abonos.
+
+    Si quieres que un abono SI descuente del gasto (ej. te devuelven tu parte de una salida
+    grupal), categorizalo con la MISMA categoria del gasto original en vez de dejarlo aqui.
+    """
+    texto = categoria.lower()
+    return any(palabra in texto for palabra in CATEGORIAS_INGRESO)
+
+
 def _con_mes(df_trans: pd.DataFrame) -> pd.DataFrame:
     df = df_trans.copy()
     df["mes"] = df["fecha"].dt.to_period("M")
@@ -21,17 +33,28 @@ def _con_mes(df_trans: pd.DataFrame) -> pd.DataFrame:
 
 
 def gasto_por_categoria_mes(df_trans: pd.DataFrame) -> pd.DataFrame:
-    """Monto por mes y categoria, incluyendo ahorro (se filtra despues segun el uso)."""
+    """Monto NETO (cargos menos abonos) por mes y categoria, incluyendo ahorro e ingreso (se
+    filtran despues segun el uso).
+
+    Es neto para que un reembolso categorizado en la MISMA categoria del gasto original (ej.
+    alguien te devuelve su parte de una salida grupal que tu pagaste completa) descuente del
+    gasto de ese mes, en vez de aparecer como un ingreso suelto que no compensa nada y deja el
+    gasto de esa categoria inflado."""
     df = _con_mes(df_trans)
-    return df[df["monto_cargo"] > 0].groupby(["mes", "categoria"], as_index=False)["monto_cargo"].sum()
+    agg = df.groupby(["mes", "categoria"], as_index=False).agg(
+        _cargo=("monto_cargo", "sum"), _abono=("monto_abono", "sum")
+    )
+    agg["monto_cargo"] = agg["_cargo"] - agg["_abono"]
+    return agg[["mes", "categoria", "monto_cargo"]]
 
 
 def gasto_por_mes(df_trans: pd.DataFrame) -> pd.Series:
-    """Gasto real por mes: cargos que no son transferencias a ahorro/inversion."""
+    """Gasto real por mes: neto de cargos/abonos, sin contar ahorro/inversion ni ingresos genuinos."""
     cat_mes = gasto_por_categoria_mes(df_trans)
     if cat_mes.empty:
         return pd.Series(dtype=float)
     cat_mes = cat_mes[~cat_mes["categoria"].apply(es_categoria_ahorro)]
+    cat_mes = cat_mes[~cat_mes["categoria"].apply(es_categoria_ingreso)]
     return cat_mes.groupby("mes")["monto_cargo"].sum().sort_index()
 
 
@@ -74,6 +97,7 @@ def comparacion_por_categoria(df_trans: pd.DataFrame) -> pd.DataFrame:
     if cat_mes.empty:
         return pd.DataFrame(columns=["mes", "categoria", "monto_cargo"])
     cat_mes = cat_mes[~cat_mes["categoria"].apply(es_categoria_ahorro)]
+    cat_mes = cat_mes[~cat_mes["categoria"].apply(es_categoria_ingreso)]
     meses = sorted(cat_mes["mes"].unique())
     if len(meses) < 2:
         return pd.DataFrame(columns=["mes", "categoria", "monto_cargo"])
@@ -88,6 +112,7 @@ def _categorias_sobre_promedio(df_trans: pd.DataFrame, umbral: float, min_meses_
     cat_mes = gasto_por_categoria_mes(df_trans)
     if cat_mes.empty:
         return pd.DataFrame()
+    cat_mes = cat_mes[~cat_mes["categoria"].apply(es_categoria_ingreso)]
 
     mes_actual = cat_mes["mes"].max()
     historico = cat_mes[cat_mes["mes"] < mes_actual]

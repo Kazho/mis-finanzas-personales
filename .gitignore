@@ -6,7 +6,7 @@ venv/
 data/finanzas.db
 data/ejemplos/
 .streamlit/secrets.toml
-.claude/settings.local.json
+.claude/
 
 # Salida de empaquetado (PyInstaller + Inno Setup) -- se regenera con build_installer,
 # no se sube al repo.

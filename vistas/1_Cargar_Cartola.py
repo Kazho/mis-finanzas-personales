@@ -1,10 +1,13 @@
 import pdfplumber
 import streamlit as st
 import pandas as pd
+from pdfminer.pdfdocument import PDFPasswordIncorrect
+from pdfplumber.utils.exceptions import PdfminerException
 
 from src.db import get_conn, get_or_create_cuenta, guardar_saldo_snapshot, init_db
 from src.parser_cartola import parse_cartola
 from src.parser_movimientos import parse_movimientos, es_movimientos
+from src.parser_bancoestado import parse_cartola_bancoestado, es_bancoestado_cuentarut
 from src.categorias import categorizar, listar_categorias, asegurar_reglas_default
 from src.formato import clp
 
@@ -13,35 +16,61 @@ asegurar_reglas_default()
 
 st.title("Cargar Cartola / Movimientos")
 st.caption(
-    "Soporta dos documentos de Banco de Chile: la cartola oficial mensual ('Estado de Cuenta'), y el PDF de "
-    "'Movimientos al [fecha]' que puedes descargar en cualquier momento desde tu banca en linea para ver tu "
-    "saldo actual antes de que salga la cartola. Puedes cargar ambos sin miedo a duplicar: si un movimiento "
-    "ya lo cargaste con uno, no se repite al cargar el otro."
+    "Soporta la cartola oficial mensual de Banco de Chile ('Estado de Cuenta'), el PDF de 'Movimientos al "
+    "[fecha]' que puedes descargar en cualquier momento desde tu banca en linea de Banco de Chile, y la "
+    "cartola CuentaRUT de BancoEstado. Puedes cargar varios sin miedo a duplicar: si un movimiento ya lo "
+    "cargaste, no se repite al cargar otro documento que lo incluya de nuevo."
 )
 
 archivo = st.file_uploader("Selecciona el PDF", type="pdf")
 
 if archivo is not None:
-    with pdfplumber.open(archivo) as pdf:
-        texto_pagina1 = pdf.pages[0].extract_text() or ""
-    archivo.seek(0)
-    es_tipo_movimientos = es_movimientos(texto_pagina1)
+    password_key = f"pdf_password_{archivo.name}"
+    password = st.session_state.get(password_key, "")
 
     try:
-        resultado = parse_movimientos(archivo) if es_tipo_movimientos else parse_cartola(archivo)
+        with pdfplumber.open(archivo, password=password) as pdf:
+            texto_pagina1 = pdf.pages[0].extract_text() or ""
+        archivo.seek(0)
+    except PdfminerException as e:
+        # pdfplumber envuelve el error real de pdfminer dentro de PdfminerException en vez de
+        # dejarlo pasar directo, asi que hay que mirar la causa para saber si es de contraseña.
+        if not isinstance(e.args[0] if e.args else None, PDFPasswordIncorrect):
+            st.error(f"No se pudo leer el PDF. Detalle: {e}")
+            st.stop()
+        st.warning("Este PDF esta protegido con contraseña (comun en las cartolas CuentaRUT de BancoEstado).")
+        password_input = st.text_input("Contraseña del PDF", type="password", key=f"pw_input_{archivo.name}")
+        if st.button("Desbloquear"):
+            st.session_state[password_key] = password_input
+            st.rerun()
+        st.stop()
+
+    es_tipo_bancoestado = es_bancoestado_cuentarut(texto_pagina1)
+    es_tipo_movimientos = es_movimientos(texto_pagina1) if not es_tipo_bancoestado else False
+
+    try:
+        if es_tipo_bancoestado:
+            resultado = parse_cartola_bancoestado(archivo, password=password)
+        elif es_tipo_movimientos:
+            resultado = parse_movimientos(archivo)
+        else:
+            resultado = parse_cartola(archivo)
     except Exception as e:
         st.error(f"No se pudo leer el PDF. Detalle: {e}")
         st.stop()
 
     if not resultado["numero_cuenta"] or not resultado["transacciones"]:
-        st.error("No se reconocio la estructura de este PDF como cartola o movimientos de Banco de Chile.")
+        st.error("No se reconocio la estructura de este PDF como un documento soportado.")
         st.stop()
 
     nombre_cuenta = f"{resultado['banco']} - {resultado['numero_cuenta']}"
+    tipo_documento = (
+        "Movimientos al dia" if es_tipo_movimientos else "Cartola CuentaRUT" if es_tipo_bancoestado else "Cartola oficial"
+    )
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Cuenta", nombre_cuenta)
-    col2.metric("Tipo de documento", "Movimientos al dia" if es_tipo_movimientos else "Cartola oficial")
+    col2.metric("Tipo de documento", tipo_documento)
     if es_tipo_movimientos:
         col3.metric("Movimientos al", str(resultado["periodo_hasta"]))
     else:

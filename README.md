@@ -42,7 +42,7 @@ digitalmente) — click en "Más información" → "Ejecutar de todas formas".
 
 ## Qué puedes hacer con la app
 
-- **Cargar cartolas** de Banco de Chile (PDF) y clasificar tus movimientos automáticamente por categoría, con detección de duplicados si vuelves a cargar el mismo período.
+- **Cargar cartolas** de Banco de Chile o CuentaRUT de BancoEstado (PDF) y clasificar tus movimientos automáticamente por categoría, con detección de duplicados si vuelves a cargar el mismo período.
 - **Cargar informes de deuda CMF** (PDF) para hacer seguimiento a tu deuda vigente en el sistema financiero.
 - **Registrar ahorros** de cuentas que no entregan cartola (Mach, Tenpo, Mercado Pago, etc.), configurar su tasa de interés anual y ver una proyección de cuánto generarías dejando la plata donde está, o repartiéndola distinto entre tus cuentas.
 - **Dashboard** con gasto por categoría, comparación mes a mes, alertas de gasto inusual, metas de ahorro, evolución de tu deuda y tu saldo, y una sección de "Dólares Premio" para tarjetas de crédito con recompensas.

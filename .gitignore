@@ -2,7 +2,14 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.buildvenv/
 data/finanzas.db
 data/ejemplos/
 .streamlit/secrets.toml
 .claude/settings.local.json
+
+# Salida de empaquetado (PyInstaller + Inno Setup) -- se regenera con build_installer,
+# no se sube al repo.
+build/
+dist/
+dist_installer/

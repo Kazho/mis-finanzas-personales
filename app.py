@@ -5,6 +5,7 @@ import streamlit as st
 from src.db import init_db
 from src.categorias import asegurar_reglas_default
 from src.theme import boton_modo, inject_css, colores
+from src.actualizador import mostrar_aviso_actualizacion
 
 
 def mostrar_inicio():
@@ -121,4 +122,5 @@ nav = st.navigation(
 )
 boton_modo()
 inject_css()
+mostrar_aviso_actualizacion()
 nav.run()

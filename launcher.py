@@ -17,10 +17,12 @@ PUERTO = 8765
 
 
 def _app_dir() -> Path:
-    """Carpeta que contiene app.py: junto al .exe en el build empaquetado (onedir),
-    o la carpeta del repo en modo desarrollo."""
+    """Carpeta que contiene app.py: sys._MEIPASS en el build empaquetado (PyInstaller la fija
+    ahi tanto en onedir como en onefile -- en onedir moderno es una subcarpeta '_internal',
+    NO la carpeta del .exe, por eso no se puede asumir Path(sys.executable).parent), o la
+    carpeta del repo en modo desarrollo."""
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
     return Path(__file__).resolve().parent
 
 

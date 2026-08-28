@@ -1,0 +1,62 @@
+name: Release
+
+# Publicar una actualizacion queda en: actualizar VERSION, hacer commit, y
+#   git tag vX.Y.Z && git push origin vX.Y.Z
+# Este workflow arma el .exe, el instalador, y los publica solo en un Release de GitHub.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14.4"
+
+      - name: Verificar que VERSION coincide con el tag
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}" -replace '^v', ''
+          $version = (Get-Content VERSION -Raw).Trim()
+          if ($tag -ne $version) {
+            Write-Error "El tag (v$tag) no coincide con el archivo VERSION ($version) -- actualiza uno de los dos."
+            exit 1
+          }
+
+      - name: Instalar dependencias (versiones exactas validadas para el build)
+        run: pip install -r requirements-dev.txt
+
+      - name: Construir con PyInstaller
+        run: pyinstaller MisFinanzasPersonales.spec --noconfirm
+
+      - name: Instalar Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Compilar instalador
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" installer\setup.iss
+
+      - name: Calcular SHA256 del instalador
+        shell: pwsh
+        run: |
+          $archivo = Get-ChildItem dist_installer\*.exe | Select-Object -First 1
+          $hash = Get-FileHash $archivo.FullName -Algorithm SHA256
+          "$($hash.Hash)  $($archivo.Name)" | Out-File "$($archivo.FullName).sha256" -Encoding ascii
+
+      - name: Publicar Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist_installer/*.exe
+            dist_installer/*.sha256
+          generate_release_notes: true

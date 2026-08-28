@@ -35,3 +35,4 @@ Este documento lista qué cosas están pensadas específicamente para el caso de
 - El archivo `data/finanzas.db` **no está cifrado ni respaldado automáticamente** — si pierdes el archivo (o el computador), pierdes el historial. Conviene respaldarlo tú mismo de vez en cuando (copiar el archivo a otro lugar).
 - No hay exportación a Excel/CSV todavía — los datos solo se ven dentro de la app.
 - Probada solo en Windows; en Mac/Linux debería funcionar igual (es Python + Streamlit puro) pero no se ha verificado.
+- El instalador de Windows (`installer/setup.iss`) no está firmado digitalmente (eso requiere un certificado de firma de código pago) — Windows SmartScreen va a mostrar una advertencia la primera vez que se ejecuta. El auto-actualizador depende de que el repositorio del proyecto sea público en GitHub (para no tener que guardar ninguna credencial dentro del `.exe`).

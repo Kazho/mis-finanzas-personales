@@ -1,0 +1,18 @@
+# Dependencias para EMPAQUETAR la app como .exe (pyinstaller + MisFinanzasPersonales.spec).
+# Los usuarios finales del .exe no instalan nada de esto -- solo hace falta para construir
+# el instalador (localmente o en el workflow de CI).
+#
+# A diferencia de requirements.txt (bounds sueltos, pensado para quien corre la app desde el
+# codigo fuente), aca todo va con version EXACTA: el .spec declara a mano que metadata y que
+# submodulos empaquetar de cada paquete (ver comentarios en MisFinanzasPersonales.spec), y ese
+# ajuste esta atado a la version exacta con la que se probo -- un `pip install -U` entre builds
+# podria reintroducir errores de PackageNotFoundError/ModuleNotFoundError ya resueltos.
+pyinstaller==6.22.2
+streamlit==1.62.0
+pandas==3.0.5
+plotly==7.0.0
+pdfplumber==0.11.10
+pyarrow==25.0.1
+pypdfium2==5.13.0
+click==8.5.0
+requests==2.34.2

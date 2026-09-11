@@ -655,14 +655,91 @@ def _tab_proyeccion(df_trans: pd.DataFrame, ultimo_por_cuenta: pd.DataFrame, col
         ui.label("Aun no registras ningun ahorro. Ve a 'Registrar Ahorro' para empezar.")
         return
 
+    config_tasas = listar_config()
+    if not any(cfg.get("tasa_base") for cfg in config_tasas.values()):
+        ui.label("Configura una tasa de interes anual para tus cuentas en 'Registrar Ahorro' para ver la proyeccion aqui.")
+        return
+
+    # Calculo compartido por las 3 sub-secciones de abajo (Resumen lo usa para la ganancia total y
+    # el reparto optimo; Planificar aportes lo usa para saber si mostrar la proyeccion a fecha).
+    proy = ultimo_por_cuenta.copy()
+    proy["config"] = proy["cuenta"].apply(lambda c: config_tasas.get(c))
+    proy["tasa_efectiva_%"] = proy.apply(lambda r: tasa_efectiva(r["saldo"], r["config"]), axis=1)
+    proy["ganancia_estimada_1a"] = proy.apply(lambda r: calcular_ganancia_anual(r["saldo"], r["config"]), axis=1)
+    proy = proy[proy["ganancia_estimada_1a"] > 0][["cuenta", "saldo", "tasa_efectiva_%", "ganancia_estimada_1a"]].sort_values(
+        "ganancia_estimada_1a", ascending=False
+    )
+    ganancia_actual_total = proy["ganancia_estimada_1a"].sum() if not proy.empty else 0.0
+
+    # Submenu: la pestaña Proyeccion sola juntaba 7 bloques apilados (pedido del usuario: "mucha
+    # informacion hacia abajo, hazlo un sub menu") -- se agrupan en 3 secciones cortas, mismo patron
+    # de pestañas que ya se usa arriba para Gastos/Ahorros/Proyeccion/Deuda.
+    with ui.tabs().classes("w-full") as subtabs:
+        st_resumen = ui.tab("resumen", label="\U0001F4CA Resumen")
+        st_planificar = ui.tab("planificar", label="\U0001F3AF Planificar aportes")
+        st_tarjeta = ui.tab("tarjeta", label="\U0001F4B3 Tarjeta de credito")
+    with ui.tab_panels(subtabs, value=st_resumen).classes("w-full"):
+        with ui.tab_panel(st_resumen):
+            _sub_resumen(ultimo_por_cuenta, proy, ganancia_actual_total, config_tasas, color_proyeccion)
+        with ui.tab_panel(st_planificar):
+            _sub_planificar_aportes(df_trans, ultimo_por_cuenta, proy, config_tasas, color_proyeccion)
+        with ui.tab_panel(st_tarjeta):
+            _sub_tarjeta_credito(df_trans, ultimo_por_cuenta, config_tasas)
+
+
+def _sub_resumen(ultimo_por_cuenta, proy, ganancia_actual_total, config_tasas, color_proyeccion):
+    """Vista de solo lectura: donde esta la plata hoy, cuanto genera, y como repartirla mejor --
+    nada que completar, solo mirar."""
     with tarjeta("Donde tengo mis ahorros"):
         fig = px.pie(ultimo_por_cuenta, names="cuenta", values="saldo", title="Distribucion actual de ahorros por cuenta")
         plotly_chart(fig)
 
-        config_tasas_marginal = listar_config()
-        cuentas_con_tasa_marginal = {c: cfg for c, cfg in config_tasas_marginal.items() if cfg and cfg.get("tasa_base")}
-        if cuentas_con_tasa_marginal:
-            ui.label("¿A que cuenta conviene ingresar tu proximo ahorro?").classes("font-bold")
+    with tarjeta("Cuanto generaria si dejo la plata donde esta"):
+        texto_muted("Proyeccion a 1 año, segun la tasa que configuraste en 'Registrar Ahorro' y el saldo actual de cada cuenta.")
+        if proy.empty:
+            ui.label("Ninguna de tus cuentas con saldo tiene una tasa configurada mayor a 0.")
+        else:
+            df_proy = proy.copy()
+            df_proy["saldo"] = df_proy["saldo"].apply(clp)
+            df_proy["tasa_efectiva_%"] = df_proy["tasa_efectiva_%"].map(lambda v: f"{v:.2f}%")
+            df_proy["ganancia_estimada_1a"] = df_proy["ganancia_estimada_1a"].apply(clp)
+            tabla(df_proy, {"cuenta": "Cuenta", "saldo": "Saldo actual", "tasa_efectiva_%": "Tasa anual efectiva", "ganancia_estimada_1a": "Ganancia estimada en 1 año"})
+            kpi_cards([("Ganancia total estimada en 1 año (distribucion actual)", clp(ganancia_actual_total), color_proyeccion, "\U0001F4C8")])
+            texto_muted("Estimacion simple con interes sobre el saldo actual; no considera aportes, retiros ni cambios de tasa futuros.")
+
+    if not proy.empty:
+        with tarjeta("¿Como repartir tu plata entre tus cuentas para maximizar la ganancia?"):
+            tipos_cuenta = obtener_tipos_cuenta()
+            cuentas_movimiento = {c for c in ultimo_por_cuenta["cuenta"] if tipos_cuenta.get(c, "ahorro") == "movimiento"}
+            total_ahorros = ultimo_por_cuenta[ultimo_por_cuenta["cuenta"].isin(cuentas_movimiento)]["saldo"].sum()
+            config_tasas_reparto = {c: cfg for c, cfg in config_tasas.items() if c in cuentas_movimiento}
+            reparto = optimizar_asignacion(total_ahorros, config_tasas_reparto)
+
+            if reparto:
+                ganancia_optima = sum(r["ganancia"] for r in reparto)
+                diferencia = ganancia_optima - ganancia_actual_total
+                if diferencia > 1:
+                    detalle = ", ".join(f"**{clp(r['monto_asignado'])}** en **{r['cuenta']}**" for r in reparto)
+                    banner("success", f"Repartiendo tu total (**{clp(total_ahorros)}**) asi: {detalle} — generarias aprox. **{clp(ganancia_optima)}** al año, **{clp(diferencia)}** mas que con la distribucion actual.")
+                else:
+                    ui.label("Con la distribucion actual ya estas obteniendo el mejor resultado posible entre tus cuentas configuradas.")
+
+                df_reparto = pd.DataFrame(reparto)
+                df_reparto["monto_asignado"] = df_reparto["monto_asignado"].apply(clp)
+                df_reparto["ganancia"] = df_reparto["ganancia"].apply(clp)
+                tabla(df_reparto, {"cuenta": "Cuenta", "monto_asignado": "Monto sugerido", "ganancia": "Ganancia de ese tramo"})
+                texto_muted(
+                    "El reparto llena primero los tramos con mejor tasa y pone el resto en la siguiente mejor tasa "
+                    "disponible. No considera topes que la app no te haya informado, asi que confirma las condiciones "
+                    "reales antes de mover dinero."
+                )
+
+
+def _sub_planificar_aportes(df_trans, ultimo_por_cuenta, proy, config_tasas, color_proyeccion):
+    """Calculadoras: donde meter la proxima plata, y que pasaria si sigo aportando hasta una fecha."""
+    cuentas_con_tasa_marginal = {c: cfg for c, cfg in config_tasas.items() if cfg and cfg.get("tasa_base")}
+    if cuentas_con_tasa_marginal:
+        with tarjeta("¿A que cuenta conviene ingresar tu proximo ahorro?"):
             monto_input = ui.number("Monto que vas a ahorrar", value=100000.0, min=0.0, step=10000.0, format="%.0f")
             resultado_marginal = ui.column().classes("w-full gap-2")
 
@@ -695,33 +772,6 @@ def _tab_proyeccion(df_trans: pd.DataFrame, ultimo_por_cuenta: pd.DataFrame, col
 
             monto_input.on_value_change(lambda _: _redibujar_marginal())
             _redibujar_marginal()
-
-    config_tasas = listar_config()
-    if not any(cfg.get("tasa_base") for cfg in config_tasas.values()):
-        ui.label("Configura una tasa de interes anual para tus cuentas en 'Registrar Ahorro' para ver la proyeccion aqui.")
-        return
-
-    with tarjeta("Cuanto generaria si dejo la plata donde esta"):
-        texto_muted("Proyeccion a 1 año, segun la tasa que configuraste en 'Registrar Ahorro' y el saldo actual de cada cuenta.")
-        proy = ultimo_por_cuenta.copy()
-        proy["config"] = proy["cuenta"].apply(lambda c: config_tasas.get(c))
-        proy["tasa_efectiva_%"] = proy.apply(lambda r: tasa_efectiva(r["saldo"], r["config"]), axis=1)
-        proy["ganancia_estimada_1a"] = proy.apply(lambda r: calcular_ganancia_anual(r["saldo"], r["config"]), axis=1)
-        proy = proy[proy["ganancia_estimada_1a"] > 0][["cuenta", "saldo", "tasa_efectiva_%", "ganancia_estimada_1a"]]
-
-        ganancia_actual_total = 0.0
-        if proy.empty:
-            ui.label("Ninguna de tus cuentas con saldo tiene una tasa configurada mayor a 0.")
-        else:
-            proy = proy.sort_values("ganancia_estimada_1a", ascending=False)
-            df_proy = proy.copy()
-            df_proy["saldo"] = df_proy["saldo"].apply(clp)
-            df_proy["tasa_efectiva_%"] = df_proy["tasa_efectiva_%"].map(lambda v: f"{v:.2f}%")
-            df_proy["ganancia_estimada_1a"] = df_proy["ganancia_estimada_1a"].apply(clp)
-            tabla(df_proy, {"cuenta": "Cuenta", "saldo": "Saldo actual", "tasa_efectiva_%": "Tasa anual efectiva", "ganancia_estimada_1a": "Ganancia estimada en 1 año"})
-            ganancia_actual_total = proy["ganancia_estimada_1a"].sum()
-            kpi_cards([("Ganancia total estimada en 1 año (distribucion actual)", clp(ganancia_actual_total), color_proyeccion, "\U0001F4C8")])
-            texto_muted("Estimacion simple con interes sobre el saldo actual; no considera aportes, retiros ni cambios de tasa futuros.")
 
     if not proy.empty:
         with tarjeta("Proyeccion a una fecha"):
@@ -804,36 +854,15 @@ def _tab_proyeccion(df_trans: pd.DataFrame, ultimo_por_cuenta: pd.DataFrame, col
             fecha_input.on_value_change(lambda _: _redibujar_fecha())
             _redibujar_fecha()
 
-        with tarjeta("¿Como repartir tu plata entre tus cuentas para maximizar la ganancia?"):
-            tipos_cuenta = obtener_tipos_cuenta()
-            cuentas_movimiento = {c for c in ultimo_por_cuenta["cuenta"] if tipos_cuenta.get(c, "ahorro") == "movimiento"}
-            total_ahorros = ultimo_por_cuenta[ultimo_por_cuenta["cuenta"].isin(cuentas_movimiento)]["saldo"].sum()
-            config_tasas_reparto = {c: cfg for c, cfg in config_tasas.items() if c in cuentas_movimiento}
-            reparto = optimizar_asignacion(total_ahorros, config_tasas_reparto)
 
-            if reparto:
-                ganancia_optima = sum(r["ganancia"] for r in reparto)
-                diferencia = ganancia_optima - ganancia_actual_total
-                if diferencia > 1:
-                    detalle = ", ".join(f"**{clp(r['monto_asignado'])}** en **{r['cuenta']}**" for r in reparto)
-                    banner("success", f"Repartiendo tu total (**{clp(total_ahorros)}**) asi: {detalle} — generarias aprox. **{clp(ganancia_optima)}** al año, **{clp(diferencia)}** mas que con la distribucion actual.")
-                else:
-                    ui.label("Con la distribucion actual ya estas obteniendo el mejor resultado posible entre tus cuentas configuradas.")
-
-                df_reparto = pd.DataFrame(reparto)
-                df_reparto["monto_asignado"] = df_reparto["monto_asignado"].apply(clp)
-                df_reparto["ganancia"] = df_reparto["ganancia"].apply(clp)
-                tabla(df_reparto, {"cuenta": "Cuenta", "monto_asignado": "Monto sugerido", "ganancia": "Ganancia de ese tramo"})
-                texto_muted(
-                    "El reparto llena primero los tramos con mejor tasa y pone el resto en la siguiente mejor tasa "
-                    "disponible. No considera topes que la app no te haya informado, asi que confirma las condiciones "
-                    "reales antes de mover dinero."
-                )
-
+def _sub_tarjeta_credito(df_trans, ultimo_por_cuenta, config_tasas):
+    """Todo lo relacionado a pagar con la tarjeta y dejar el saldo flotando en una fintech mientras
+    tanto: flotar, Dolares Premio, y el comparador de DAP."""
     estado_tc = _estado_tarjeta_credito()
-    _seccion_flotar(df_trans, ultimo_por_cuenta, config_tasas, estado_tc, {"proyeccion": color_proyeccion, "deuda": colores()["danger"], "ahorros": colores()["success"], "patrimonio": colores()["accent_purple"]})
+    c = colores()
+    _seccion_flotar(df_trans, ultimo_por_cuenta, config_tasas, estado_tc, {"proyeccion": c["accent_blue"], "deuda": c["danger"], "ahorros": c["success"], "patrimonio": c["accent_purple"]})
     gasto_tarjeta_mes = _gasto_tarjeta_mes(df_trans)
-    _seccion_tarjeta_credito(estado_tc, df_trans, ultimo_por_cuenta, config_tasas, gasto_tarjeta_mes, {"gastos": colores()["accent_orange"], "ahorros": colores()["success"], "patrimonio": colores()["accent_purple"]})
+    _seccion_tarjeta_credito(estado_tc, df_trans, ultimo_por_cuenta, config_tasas, gasto_tarjeta_mes, {"gastos": c["accent_orange"], "ahorros": c["success"], "patrimonio": c["accent_purple"]})
 
 
 def _tab_deuda(df_deuda: pd.DataFrame, color_deuda: str):

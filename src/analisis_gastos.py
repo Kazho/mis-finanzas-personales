@@ -1,6 +1,8 @@
 """Analisis de gastos por mes: comparacion mes a mes y alertas por categoria."""
 import pandas as pd
 
+from src.categorias import BUCKETS, SIN_CLASIFICAR
+
 CATEGORIAS_POSITIVAS = ("ahorro", "inversion", "inversión")
 CATEGORIAS_INGRESO = ("ingreso", "transferencia recibida")
 
@@ -156,3 +158,46 @@ def logros_ahorro(df_trans: pd.DataFrame, umbral: float = 1.3, min_meses_histori
         return []
     combinado = combinado[combinado["categoria"].apply(es_categoria_ahorro)]
     return combinado.to_dict("records")
+
+
+def resumen_50_30_20(df_trans: pd.DataFrame, categoria_bucket: dict[str, str]) -> dict | None:
+    """Gasto neto del mes actual agrupado en necesidad/gusto/ahorro segun `categoria_bucket`
+    (categoria -> balde, definido por el usuario en la pagina Categorias).
+
+    Las categorias de ahorro/inversion se clasifican solas como "Ahorro" (via
+    `es_categoria_ahorro`); cualquier otra categoria que no este en `categoria_bucket` -- ya sea
+    porque el usuario todavia no la clasifico, o porque la transaccion no tiene categoria
+    asignada -- cae en "Sin clasificar" en vez de forzarse a un balde, para no mostrar un
+    grafico que parezca mas representativo de lo que realmente es.
+    """
+    cat_mes = gasto_por_categoria_mes(df_trans)
+    if cat_mes.empty:
+        return None
+    cat_mes = cat_mes[~cat_mes["categoria"].apply(es_categoria_ingreso)]
+    if cat_mes.empty:
+        return None
+
+    mes_actual = cat_mes["mes"].max()
+    cat_actual = cat_mes[cat_mes["mes"] == mes_actual].copy()
+
+    def _balde(categoria: str) -> str:
+        if es_categoria_ahorro(categoria):
+            return "Ahorro"
+        return categoria_bucket.get(categoria, SIN_CLASIFICAR)
+
+    cat_actual["balde"] = cat_actual["categoria"].apply(_balde)
+
+    total = float(cat_actual["monto_cargo"].sum())
+    por_balde = cat_actual.groupby("balde")["monto_cargo"].sum().to_dict()
+    sin_clasificar = float(por_balde.get(SIN_CLASIFICAR, 0.0))
+    categorias_sin_clasificar = sorted(
+        cat_actual.loc[cat_actual["balde"] == SIN_CLASIFICAR, "categoria"].unique().tolist()
+    )
+
+    return {
+        "mes": str(mes_actual),
+        "total": total,
+        "montos": {b: float(por_balde.get(b, 0.0)) for b in BUCKETS},
+        "sin_clasificar": sin_clasificar,
+        "categorias_sin_clasificar": categorias_sin_clasificar,
+    }

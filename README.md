@@ -1,6 +1,6 @@
 # Mis Finanzas Personales
 
-Aplicación de finanzas personales 100% local, hecha con [Streamlit](https://streamlit.io). No requiere servidor ni conexión a internet, salvo dos excepciones de solo lectura: la consulta pública del valor del dólar (para calcular Dólares Premio en tarjetas de crédito) y, si usas el instalador de Windows, el chequeo de versión nueva contra GitHub Releases. Todos tus datos se guardan en un archivo SQLite en tu propio computador — `data/finanzas.db` corriendo desde el código fuente, o `%LOCALAPPDATA%\MisFinanzasPersonales\data\finanzas.db` con el instalador — y nunca se suben a ningún servidor.
+Aplicación de finanzas personales 100% local, hecha con [NiceGUI](https://nicegui.io). No requiere servidor ni conexión a internet, salvo dos excepciones de solo lectura: la consulta pública del valor del dólar (para calcular Dólares Premio en tarjetas de crédito) y, si usas el instalador de Windows, el chequeo de versión nueva contra GitHub Releases. Todos tus datos se guardan en un archivo SQLite en tu propio computador — `data/finanzas.db` corriendo desde el código fuente, o `%LOCALAPPDATA%\MisFinanzasPersonales\data\finanzas.db` con el instalador — y nunca se suben a ningún servidor.
 
 Cada persona que quiera usarla debe instalarla y correrla en su propio computador — no es un servicio compartido. Cada instalación parte con una base de datos vacía y tú vas cargando tu propia información.
 
@@ -33,12 +33,12 @@ digitalmente) — click en "Más información" → "Ejecutar de todas formas".
 4. Ejecuta la app:
 
    ```
-   streamlit run app.py
+   py launcher.py
    ```
 
    En Windows también puedes usar el acceso directo `run.bat`.
 
-5. Se abrirá en tu navegador en `http://localhost:8501`. La primera vez, la app crea automáticamente el archivo `data/finanzas.db` vacío.
+5. Se abrirá en tu navegador en `http://localhost:8765`. La primera vez, la app crea automáticamente el archivo `data/finanzas.db` vacío.
 
 ## Qué puedes hacer con la app
 
@@ -47,19 +47,18 @@ digitalmente) — click en "Más información" → "Ejecutar de todas formas".
 - **Registrar ahorros** de cuentas que no entregan cartola (Mach, Tenpo, Mercado Pago, etc.), configurar su tasa de interés anual y ver una proyección de cuánto generarías dejando la plata donde está, o repartiéndola distinto entre tus cuentas.
 - **Dashboard** con gasto por categoría, comparación mes a mes, alertas de gasto inusual, metas de ahorro, evolución de tu deuda y tu saldo, y una sección de "Dólares Premio" para tarjetas de crédito con recompensas.
 - **Categorías** completamente editables: reglas de categorización automática por palabra clave, categorías propias sin regla asociada, y ajuste manual de la categoría de cualquier transacción ya cargada.
-- Modo claro y oscuro, intercambiables desde la barra lateral.
+- Modo claro y oscuro, intercambiables desde el boton en la parte superior.
 
 Antes de usarla en serio, revisa [LIMITACIONES.md](LIMITACIONES.md) — hay varias cosas pensadas específicamente para el caso de uso original que quizás debas ajustar a tu banco, tarjeta o AFP.
 
 ## Estructura del proyecto
 
 ```
-app.py                  Punto de entrada, navegación y pagina de Inicio
-vistas/                 Una pagina de Streamlit por archivo
+launcher.py             Punto de entrada (modo desarrollo y .exe empaquetado, sin consola visible)
+paginas_nicegui/        Una pagina de NiceGUI por archivo (@ui.page)
 src/                    Logica de negocio (parsers, categorizacion, proyeccion, base de datos)
+src/ui_nicegui/         Tema, componentes y helpers de la capa visual (NiceGUI)
 data/finanzas.db        Base de datos SQLite local (se crea sola, no se sube a git)
-.streamlit/config.toml  Tema visual por defecto
-launcher.py             Punto de entrada del .exe empaquetado (sin consola visible)
 VERSION                 Version actual, fuente unica de verdad para el instalador y el updater
 assets/app.ico          Icono de la app
 installer/setup.iss     Script de Inno Setup para armar el instalador de Windows

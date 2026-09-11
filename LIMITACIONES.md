@@ -25,7 +25,7 @@ Este documento lista qué cosas están pensadas específicamente para el caso de
 
 ## Tarjeta de crédito / Dólares Premio
 
-- Las tasas de acumulación de Dólares Premio (`TASAS_DOLARES_PREMIO` en `vistas/4_Dashboard.py`) son las de **Banco de Chile** para compras nacionales. Si tu tarjeta es de otro banco o tiene otro programa de recompensas, esos cálculos no van a ser correctos — habría que reemplazar esa tabla por la de tu banco.
+- Las tasas de acumulación de Dólares Premio (`TASAS_DOLARES_PREMIO` en `paginas_nicegui/dashboard.py`) son las de **Banco de Chile** para compras nacionales. Si tu tarjeta es de otro banco o tiene otro programa de recompensas, esos cálculos no van a ser correctos — habría que reemplazar esa tabla por la de tu banco.
 - Solo se puede configurar **una tarjeta de crédito a la vez** (una sola fila de configuración guardada). Si tienes más de una tarjeta, tendrías que elegir cuál trackear o extender la app para soportar varias.
 - El valor del dólar se obtiene de una API pública (mindicador.cl) una vez al día — no es editable a mano, así que si esa API falla o no aplica a tu caso, esa parte de la app queda sin datos hasta que vuelva a responder.
 
@@ -34,5 +34,5 @@ Este documento lista qué cosas están pensadas específicamente para el caso de
 - Es una app **de un solo usuario por instalación**: no hay login, perfiles múltiples ni separación de datos entre personas dentro de una misma base de datos. Si varias personas la usan, cada una necesita su propia instalación (su propia carpeta con su propio `data/finanzas.db`).
 - El archivo `data/finanzas.db` **no está cifrado ni respaldado automáticamente** — si pierdes el archivo (o el computador), pierdes el historial. Conviene respaldarlo tú mismo de vez en cuando (copiar el archivo a otro lugar).
 - No hay exportación a Excel/CSV todavía — los datos solo se ven dentro de la app.
-- Probada solo en Windows; en Mac/Linux debería funcionar igual (es Python + Streamlit puro) pero no se ha verificado.
+- Probada solo en Windows; en Mac/Linux debería funcionar igual (es Python + NiceGUI puro) pero no se ha verificado.
 - El instalador de Windows (`installer/setup.iss`) no está firmado digitalmente (eso requiere un certificado de firma de código pago) — Windows SmartScreen va a mostrar una advertencia la primera vez que se ejecuta. El auto-actualizador depende de que el repositorio del proyecto sea público en GitHub (para no tener que guardar ninguna credencial dentro del `.exe`).

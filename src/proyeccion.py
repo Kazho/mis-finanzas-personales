@@ -240,6 +240,26 @@ def proyectar_saldo(saldo_inicial: float, config: dict | None, ritmo_mensual: fl
     }
 
 
+INFLACION_DEFAULT = 3.0  # meta de inflacion del Banco Central, para cuando no hay dato de internet
+
+
+def tasa_real(tasa_nominal_pct: float, inflacion_pct: float) -> float:
+    """Tasa anual real (%): cuanto crece tu poder de compra, no solo tus pesos. Usa la relacion de
+    Fisher exacta ((1+n)/(1+i) - 1), no la resta simple n - i, que se desvia con inflacion alta."""
+    return ((1 + tasa_nominal_pct / 100) / (1 + inflacion_pct / 100) - 1) * 100
+
+
+def a_pesos_de_hoy(monto_futuro: float, inflacion_pct: float, meses: float) -> float:
+    """Descuenta la inflacion de un monto futuro: cuanto valdria hoy en poder de compra."""
+    return monto_futuro / (1 + inflacion_pct / 100) ** (meses / 12)
+
+
+def uf_futura(uf_hoy: float, inflacion_pct: float, meses: float) -> float:
+    """Valor estimado de la UF en `meses`, suponiendo que la inflacion se mantiene (la UF se reajusta
+    siguiendo al IPC)."""
+    return uf_hoy * (1 + inflacion_pct / 100) ** (meses / 12)
+
+
 def simular_dap(monto: float, tasa_pct: float, dias: int, tasa_es_anual: bool = False) -> dict:
     """Simula un Deposito a Plazo (DAP).
 

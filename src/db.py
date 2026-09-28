@@ -1,16 +1,26 @@
-"""Acceso a la base de datos local (SQLite) del proyecto."""
+"""Acceso a la base de datos local (SQLite) del proyecto.
+
+La base vive cifrada en disco (`finanzas.db.enc`, ver src/boveda.py) y se trabaja sobre una copia
+descifrada en memoria mientras la app esta desbloqueada. `get_conn()` es el unico punto de acceso:
+entrega esa conexion y, al salir sin errores, confirma la transaccion y vuelve a cifrar y guardar el
+archivo si hubo cambios -- el resto de la app no sabe que hay cifrado de por medio."""
 import os
 import sqlite3
 import sys
 from pathlib import Path
 from contextlib import contextmanager
 
+from src.boveda import Boveda
+
 
 def _data_dir() -> Path:
     """En la app empaquetada (PyInstaller) los datos van a una carpeta estable en
     %LOCALAPPDATA%, separada de donde se instale/reinstale el programa, para que
     actualizar o reinstalar la app nunca borre el historial financiero del usuario.
-    En modo desarrollo (python app.py / run.bat) se mantiene la carpeta del repo."""
+    En modo desarrollo (python app.py / run.bat) se mantiene la carpeta del repo.
+    MFP_DATA_DIR permite apuntar a otra carpeta (pruebas con una copia de los datos)."""
+    if os.environ.get("MFP_DATA_DIR"):
+        return Path(os.environ["MFP_DATA_DIR"])
     if getattr(sys, "frozen", False):
         base = Path(os.environ.get("LOCALAPPDATA", Path.home()))
         return base / "MisFinanzasPersonales" / "data"
@@ -18,7 +28,12 @@ def _data_dir() -> Path:
 
 
 DATA_DIR = _data_dir()
-DB_PATH = DATA_DIR / "finanzas.db"
+DB_PATH = DATA_DIR / "finanzas.db"  # base SIN cifrar de versiones anteriores; solo se lee para migrarla
+BOVEDA_PATH = DATA_DIR / "finanzas.db.enc"
+
+boveda = Boveda(BOVEDA_PATH, DB_PATH)
+_lock = boveda.lock
+_profundidad = 0
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cuentas (
@@ -139,6 +154,15 @@ CREATE TABLE IF NOT EXISTS categoria_bucket (
     categoria TEXT PRIMARY KEY,
     bucket TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS compras_cuotas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    descripcion TEXT NOT NULL,
+    valor_cuota REAL NOT NULL,
+    total_cuotas INTEGER NOT NULL,
+    mes_primera_cuota TEXT NOT NULL,
+    fecha_registro TEXT NOT NULL
+);
 """
 
 MIGRACIONES = [
@@ -158,15 +182,28 @@ MIGRACIONES = [
 
 @contextmanager
 def get_conn():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
+    """Conexion a la base descifrada en memoria. Las llamadas anidadas comparten la transaccion: solo
+    la mas externa confirma (o deshace, si hubo una excepcion) y guarda el archivo cifrado."""
+    global _profundidad
+    with _lock:
+        conn = boveda.conn
+        if conn is None:
+            raise RuntimeError("La base de datos esta bloqueada: desbloquea la app primero.")
+        _profundidad += 1
+        cambios_antes = conn.total_changes
+        try:
+            yield conn
+        except BaseException:
+            if _profundidad == 1:
+                conn.rollback()
+            raise
+        else:
+            if _profundidad == 1:
+                conn.commit()
+                if conn.total_changes != cambios_antes:
+                    boveda.guardar()
+        finally:
+            _profundidad -= 1
 
 
 def init_db():
@@ -178,6 +215,8 @@ def init_db():
             columnas = {r["name"] for r in conn.execute(f"PRAGMA table_info({tabla})").fetchall()}
             if columna not in columnas:
                 conn.execute(alter)
+    # CREATE/ALTER no cuentan en total_changes, asi que get_conn no detecta que hay que guardar.
+    boveda.guardar()
 
 
 def get_or_create_cuenta(nombre: str, banco: str = None, numero_cuenta: str = None) -> int:

@@ -4,6 +4,10 @@ __pycache__/
 venv/
 .buildvenv/
 data/finanzas.db
+# Base cifrada, su temporal de escritura, la copia sin cifrar de la migracion y los respaldos: son
+# datos personales (el repo es publico), aunque esten cifrados no se suben.
+data/finanzas.db*
+data/respaldos/
 data/ejemplos/
 .claude/
 

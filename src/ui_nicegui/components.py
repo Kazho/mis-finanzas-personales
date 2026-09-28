@@ -1,6 +1,8 @@
 """Componentes chicos reutilizados en varias vistas -- equivalentes NiceGUI de helpers que en la
 version Streamlit vivian en src/theme.py (kpi_cards) o eran un st.dataframe/st.container(border=True)
 repetido a mano en cada vista."""
+import html as html_lib
+
 import pandas as pd
 from nicegui import ui
 
@@ -58,12 +60,14 @@ def campo_fecha(valor_inicial: str, etiqueta: str | None = None) -> ui.input:
     mas de un formulario), asi que se envuelve en un input con el calendario en un menu popup, patron
     estandar de NiceGUI. `.value` del input devuelto es el mismo string ISO (YYYY-MM-DD) que ui.date
     usa directamente, asi que se lee igual en el resto del codigo (datetime.date.fromisoformat(...))."""
-    campo = ui.input(etiqueta, value=valor_inicial)
+    # El menu va DENTRO del input y con `no-parent-event`: un q-menu se abre con cualquier click en su
+    # elemento padre, y si quedaba como hijo de la fila del formulario, hacer click en otro campo de
+    # esa misma fila (ej. un select) tambien abria el calendario encima de sus opciones.
+    with ui.input(etiqueta, value=valor_inicial) as campo:
+        with ui.menu().props("no-parent-event") as menu:
+            ui.date(value=valor_inicial).bind_value(campo)
     with campo.add_slot("append"):
-        icono = ui.icon("edit_calendar").classes("cursor-pointer")
-    with ui.menu() as menu:
-        ui.date(value=valor_inicial).bind_value(campo)
-    icono.on("click", menu.open)
+        ui.icon("edit_calendar").classes("cursor-pointer").on("click", menu.open)
     return campo
 
 
@@ -81,7 +85,10 @@ def banner(tipo: str, texto: str) -> None:
     color segun el tipo. `texto` admite **negrita** estilo markdown (se convierte a <b>)."""
     c = colores()
     color = {"success": c["success"], "warning": c["accent_orange"], "error": c["danger"], "info": c["accent_blue"]}[tipo]
-    partes = texto.split("**")
+    # Se escapa cada parte: el texto incluye datos que vienen de afuera (descripciones de la cartola,
+    # nombres de categorias o cuentas), y sin escapar alguien podria colar HTML -- por ejemplo un link
+    # falso -- con solo transferirte plata con un nombre o glosa armada.
+    partes = [html_lib.escape(p) for p in texto.split("**")]
     html = "".join(f"<b>{p}</b>" if i % 2 else p for i, p in enumerate(partes))
     with ui.row().classes("w-full items-start gap-2 rounded p-3").style(
         f"background-color:{color}1a;border-left:3px solid {color}"

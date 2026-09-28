@@ -30,7 +30,7 @@ GITHUB_REPO = "mis-finanzas-personales"
 # de la cuenta de GitHub, no podria distribuir un instalador malicioso. Mientras sea None (clave aun no
 # generada), la app avisa de la version nueva pero no la instala sola: pide descargarla a mano.
 # La escribe `py installer/firmar_release.py generar-clave`; no editar a mano.
-CLAVE_PUBLICA_RELEASES: str | None = None
+CLAVE_PUBLICA_RELEASES: str | None = "/nbSRHGdgRUuCApmTXsRHCWQ6B07MgyO21g+V0BoLdw="
 CONTEXTO_FIRMA = b"MisFinanzasPersonales-release-v1"
 URL_RELEASES_WEB = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
 

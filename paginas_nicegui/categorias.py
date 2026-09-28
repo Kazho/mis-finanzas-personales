@@ -39,7 +39,7 @@ from src.ui_nicegui.layout import layout
 
 COLUMNAS_TRANSACCION_BASE = [
     {"campo": "fecha", "titulo": "Fecha", "tipo": "solo_lectura"},
-    {"campo": "descripcion", "titulo": "Descripcion", "tipo": "solo_lectura"},
+    {"campo": "descripcion", "titulo": "Descripcion", "tipo": "solo_lectura", "ancho": 2},
     {"campo": "sucursal", "titulo": "Sucursal", "tipo": "solo_lectura"},
     {"campo": "cuenta", "titulo": "Cuenta", "tipo": "solo_lectura"},
     {"campo": "monto_cargo", "titulo": "Cargo", "tipo": "solo_lectura"},

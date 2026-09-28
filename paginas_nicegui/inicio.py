@@ -83,15 +83,10 @@ def pagina_inicio():
             )
             with ui.row().classes("flex-wrap items-baseline gap-1").style(f"max-width:640px"):
                 ui.label(
-                    "Administra tus finanzas personales de forma simple y segura — tus datos se guardan en"
-                ).style(f"color:{c['hero_subtext']};font-size:16px;line-height:1.6")
-                ui.label("data/finanzas.db").classes("px-1 rounded font-mono").style(
-                    f"background-color:{c['hero_text']}22;color:{c['hero_text']};font-size:14px"
-                )
-                ui.label(
-                    "en tu computador, nunca se suben a ningun servidor. La unica excepcion es el valor del "
-                    "dolar (Dashboard > Proyeccion), que se consulta a una API publica para no tener que "
-                    "ingresarlo a mano — esa consulta no envia ningun dato tuyo, solo pide el valor del dia."
+                    "Administra tus finanzas personales de forma simple y segura — tus datos se guardan "
+                    "cifrados (AES-256) con tu contraseña: sin ella o tu codigo de recuperacion nadie puede "
+                    "leerlos. La app solo consulta a internet el valor del dolar y de la UF (mindicador.cl), "
+                    "sin enviar ningun dato tuyo."
                 ).style(f"color:{c['hero_subtext']};font-size:16px;line-height:1.6")
 
         with ui.row().classes("w-full gap-4"):

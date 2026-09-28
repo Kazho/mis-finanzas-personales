@@ -19,6 +19,9 @@ from nicegui import ui
 
 TipoColumna = str  # "texto" | "numero" | "select" | "checkbox" | "solo_lectura"
 
+MAX_FILAS_AUTO_ALTO = 12
+ALTO_TABLA_LARGA = "480px"
+
 
 def editable_table(
     filas: list[dict[str, Any]],
@@ -34,6 +37,7 @@ def editable_table(
       - "titulo": encabezado visible (por defecto, el campo)
       - "tipo": "texto" (por defecto) | "numero" | "select" | "checkbox" | "solo_lectura"
       - "opciones": lista de valores validos, solo para tipo "select"
+      - "ancho": peso relativo de la columna (flex de AG Grid, por defecto 1)
 
     `on_guardar(originales, editados)` se llama al presionar el boton (puede ser sync o async) con
     dos listas de dicts: las filas como estaban antes de mostrarse, y las filas ya editadas por el
@@ -44,7 +48,7 @@ def editable_table(
     col_defs: list[dict[str, Any]] = []
     for c in columnas:
         campo = c["campo"]
-        d: dict[str, Any] = {"field": campo, "headerName": c.get("titulo", campo)}
+        d: dict[str, Any] = {"field": campo, "headerName": c.get("titulo", campo), "flex": c.get("ancho", 1)}
         tipo: TipoColumna = c.get("tipo", "texto")
         if tipo == "solo_lectura":
             d["editable"] = False
@@ -62,15 +66,21 @@ def editable_table(
             d["editable"] = True
         col_defs.append(d)
 
+    # ui.aggrid trae un alto fijo por defecto: con domLayout "autoHeight" las filas se desbordaban
+    # del contenedor. Tablas cortas crecen a su contenido; las largas scrollean dentro de un alto fijo.
+    auto_alto = len(filas) <= MAX_FILAS_AUTO_ALTO
     grid = ui.aggrid(
         {
             "columnDefs": col_defs,
+            # Columnas proporcionales al ancho disponible (en vez de 200px fijos, que forzaban scroll
+            # horizontal); en pantallas angostas minWidth evita aplastar el texto (ahi si scrollea).
+            "defaultColDef": {"minWidth": 110, "resizable": True},
             "rowData": filas,
             "stopEditingWhenCellsLoseFocus": True,
-            "domLayout": "autoHeight",
+            "domLayout": "autoHeight" if auto_alto else "normal",
             "suppressCellFocus": False,
         }
-    ).classes("w-full")
+    ).classes("w-full").style("height:auto" if auto_alto else f"height:{ALTO_TABLA_LARGA}")
 
     async def _guardar() -> None:
         editados = await grid.get_client_data()

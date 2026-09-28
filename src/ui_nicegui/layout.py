@@ -7,8 +7,11 @@ concretos de la evaluacion de diseño ("las acciones de cargar datos estan escon
 """
 from contextlib import contextmanager
 
-from nicegui import ui
+from nicegui import run, ui
 
+from src import sesion_local
+from src.boveda import LARGO_MIN_CONTRASENA, ContrasenaIncorrecta
+from src.db import boveda
 from src.ui_nicegui.actualizador import aviso_actualizacion
 from src.ui_nicegui.theme import alternar_modo, colores, registrar_dark_mode
 
@@ -40,10 +43,13 @@ def layout(ruta_activa: str):
         with ui.row().classes("items-center gap-2"):
             ui.icon("account_balance_wallet", color=c["primary"])
             ui.label("Mis Finanzas Personales").classes("text-lg font-bold")
-        ui.button(
-            icon="dark_mode" if not dark.value else "light_mode",
-            on_click=lambda: (alternar_modo(), ui.navigate.reload()),
-        ).props("flat round").tooltip("Cambiar modo claro/oscuro")
+        with ui.row().classes("items-center gap-1"):
+            ui.button(icon="key", on_click=_dialogo_cambiar_contrasena).props("flat round").tooltip("Cambiar contraseña")
+            ui.button(icon="lock", on_click=_bloquear).props("flat round").tooltip("Bloquear (cifra y oculta tus datos)")
+            ui.button(
+                icon="dark_mode" if not dark.value else "light_mode",
+                on_click=lambda: (alternar_modo(), ui.navigate.reload()),
+            ).props("flat round").tooltip("Cambiar modo claro/oscuro")
 
     with ui.left_drawer(value=True).classes("q-pa-md gap-1").style(
         f"background-color:{c['surface']}"
@@ -59,9 +65,105 @@ def layout(ruta_activa: str):
                 ui.icon(icono, color=c["primary"] if activa else c["text_muted"])
                 ui.label(titulo).style(f"color:{c['primary'] if activa else c['text']}")
 
-    with ui.column().classes("w-full max-w-5xl mx-auto p-6 gap-4"):
+    _reportar_actividad()
+
+    with ui.column().classes("w-full max-w-screen-2xl mx-auto p-6 gap-4"):
         aviso_actualizacion()
+        _aviso_respaldo_sin_cifrar()
         yield
+
+
+# Cada interaccion del usuario (mouse, teclado, scroll, toque) avisa al servidor que sigue ahi, como
+# maximo una vez cada 20 s para no inundar el websocket. El vigilante de launcher.py bloquea la app si
+# pasan 5 minutos sin ningun aviso de ninguna pestaña.
+_JS_ACTIVIDAD = """
+<script>
+(() => {
+  let ultimo = 0;
+  const avisar = () => {
+    const ahora = Date.now();
+    if (ahora - ultimo < 20000) return;
+    ultimo = ahora;
+    try { emitEvent('mfp_actividad'); } catch (e) {}
+  };
+  ['mousemove', 'mousedown', 'keydown', 'wheel', 'scroll', 'touchstart']
+    .forEach(ev => window.addEventListener(ev, avisar, {passive: true, capture: true}));
+})();
+</script>
+"""
+
+
+def _reportar_actividad():
+    ui.add_body_html(_JS_ACTIVIDAD)
+    ui.on("mfp_actividad", lambda _: sesion_local.registrar_actividad())
+
+
+def _bloquear():
+    sesion_local.revocar_todo()
+    boveda.bloquear()
+    ui.navigate.to("/desbloquear")
+
+
+def _dialogo_cambiar_contrasena():
+    with ui.dialog() as dialogo, ui.card().classes("w-96 gap-3"):
+        ui.label("Cambiar contraseña").classes("text-lg font-bold")
+        actual = ui.input("Contraseña actual", password=True, password_toggle_button=True).classes("w-full")
+        nueva1 = ui.input(f"Contraseña nueva (minimo {LARGO_MIN_CONTRASENA} caracteres)", password=True, password_toggle_button=True).classes("w-full")
+        nueva2 = ui.input("Repite la contraseña nueva", password=True, password_toggle_button=True).classes("w-full")
+        ui.label("Tu codigo de recuperacion sigue siendo el mismo.").style("font-size:12px;opacity:.7")
+
+        async def _cambiar():
+            if nueva1.value != nueva2.value:
+                ui.notify("Las contraseñas nuevas no coinciden.", type="warning")
+                return
+            try:
+                await run.io_bound(boveda.cambiar_contrasena, actual.value or "", nueva1.value or "")
+            except ContrasenaIncorrecta:
+                ui.notify("La contraseña actual no es correcta.", type="negative")
+                return
+            except ValueError as e:
+                ui.notify(str(e), type="warning")
+                return
+            ui.notify("Contraseña cambiada.", type="positive")
+            dialogo.close()
+
+        with ui.row().classes("w-full justify-end"):
+            ui.button("Cancelar", on_click=dialogo.close).props("flat")
+            ui.button("Cambiar", on_click=_cambiar).props("color=primary")
+    dialogo.open()
+
+
+def _aviso_respaldo_sin_cifrar():
+    """Despues de migrar, la base original SIN cifrar queda como respaldo por si algo salio mal. Hasta
+    que el usuario la elimine, cualquiera con acceso al PC puede leerla, asi que se avisa en cada pagina."""
+    if not boveda.hay_respaldo_sin_cifrar():
+        return
+    c = colores()
+    with ui.card().classes("w-full").style(f"border:1px solid {c['danger']};background-color:{c['surface']}") as aviso:
+        with ui.row().classes("items-center gap-3 w-full"):
+            ui.icon("warning", color=c["danger"])
+            ui.label(
+                "Quedo una copia SIN cifrar de tus datos de antes de activar el cifrado "
+                f"({', '.join(p.name for p in boveda.copias_sin_cifrar())}). Revisa que todo se vea bien y eliminala: "
+                "mientras exista, cualquiera con acceso a tu PC puede leerla."
+            ).classes("flex-1")
+
+            def _confirmar():
+                with ui.dialog() as dlg, ui.card():
+                    ui.label("¿Eliminar la copia sin cifrar? Tus datos siguen a salvo en la version cifrada.")
+                    with ui.row().classes("w-full justify-end"):
+                        ui.button("Cancelar", on_click=dlg.close).props("flat")
+
+                        def _eliminar():
+                            boveda.eliminar_respaldo_sin_cifrar()
+                            dlg.close()
+                            aviso.delete()
+                            ui.notify("Copia sin cifrar eliminada.", type="positive")
+
+                        ui.button("Eliminar", on_click=_eliminar).props("color=negative")
+                dlg.open()
+
+            ui.button("Eliminar copia sin cifrar", on_click=_confirmar).props("color=negative outline")
 
 
 def pagina_placeholder(ruta: str, titulo: str):

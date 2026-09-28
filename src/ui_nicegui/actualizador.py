@@ -8,7 +8,13 @@ en vez de st.info/st.button) y el cache (TTL manual, ver src.ui_nicegui.cache, e
 @st.cache_data que depende de una sesion Streamlit)."""
 from nicegui import run, ui
 
-from src.actualizador_core import buscar_actualizacion_sin_cache, descargar_instalador, instalar_y_salir
+from src.actualizador_core import (
+    CLAVE_PUBLICA_RELEASES,
+    URL_RELEASES_WEB,
+    buscar_actualizacion_sin_cache,
+    descargar_instalador,
+    instalar_y_salir,
+)
 from src.ui_nicegui.cache import cache_ttl
 from src.ui_nicegui.theme import colores
 
@@ -32,7 +38,7 @@ def aviso_actualizacion():
     ):
         ui.label(f"\U0001F195 Hay una version nueva disponible: {disponible['version']}").style(f"color:{c['text']}")
         with ui.row().classes("gap-2"):
-            ui.button("Actualizar ahora", on_click=lambda: _actualizar(disponible["url_instalador"])).props("color=primary dense")
+            ui.button("Actualizar ahora", on_click=lambda: _actualizar(disponible)).props("color=primary dense")
             ui.button("Ahora no", on_click=_descartar).props("flat dense")
 
 
@@ -44,11 +50,23 @@ def _descartar():
     aviso_actualizacion.refresh()
 
 
-async def _actualizar(url_instalador: str):
-    ui.notify("Descargando actualizacion...", type="ongoing", timeout=0)
-    destino = await run.io_bound(descargar_instalador, url_instalador)
+async def _actualizar(disponible: dict):
+    if not disponible.get("url_firma") or not CLAVE_PUBLICA_RELEASES:
+        # Sin firma verificable no se instala nada solo; el usuario decide si descargarla a mano.
+        ui.notify(
+            f"Esta version no trae firma verificable, asi que no se instala automaticamente. Si quieres, "
+            f"descargala a mano desde {URL_RELEASES_WEB}",
+            type="warning", multi_line=True, timeout=0, close_button=True,
+        )
+        return
+    ui.notify("Descargando y verificando la actualizacion...", type="ongoing", timeout=0)
+    destino = await run.io_bound(descargar_instalador, disponible["url_instalador"], disponible["url_firma"], disponible["version"])
     if destino is None:
-        ui.notify("No se pudo descargar la actualizacion. Intenta mas tarde desde 'Actualizar ahora'.", type="negative")
+        ui.notify(
+            "No se instalo la actualizacion: fallo la descarga o la firma no es valida (el archivo podria "
+            "haber sido alterado). Intenta mas tarde.",
+            type="negative", multi_line=True, timeout=0, close_button=True,
+        )
         return
     ui.notify("Actualizacion descargada. La app se va a cerrar para instalarla...", type="positive")
     instalar_y_salir(destino)

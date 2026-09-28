@@ -2,7 +2,9 @@ name: Release
 
 # Publicar una actualizacion queda en: actualizar VERSION, hacer commit, y
 #   git tag vX.Y.Z && git push origin vX.Y.Z
-# Este workflow arma el .exe, el instalador, y los publica solo en un Release de GitHub.
+# Este workflow arma el .exe y el instalador y los deja en un Release BORRADOR. Para que llegue a los
+# usuarios, firmarlo y publicarlo desde tu PC:
+#   py installer/firmar_release.py firmar vX.Y.Z
 on:
   push:
     tags:
@@ -53,9 +55,14 @@ jobs:
           $hash = Get-FileHash $archivo.FullName -Algorithm SHA256
           "$($hash.Hash)  $($archivo.Name)" | Out-File "$($archivo.FullName).sha256" -Encoding ascii
 
-      - name: Publicar Release
+      # Se publica como BORRADOR: las apps instaladas no lo ven (releases/latest ignora borradores) hasta
+      # que el autor lo firme y lo publique desde su PC con `py installer/firmar_release.py firmar vX.Y.Z`.
+      # La clave de firma nunca pasa por GitHub, asi que tomar control del repo no basta para distribuir
+      # una actualizacion que las apps acepten.
+      - name: Publicar Release (borrador, pendiente de firma)
         uses: softprops/action-gh-release@v2
         with:
+          draft: true
           files: |
             dist_installer/*.exe
             dist_installer/*.sha256

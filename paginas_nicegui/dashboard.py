@@ -19,7 +19,7 @@ import plotly.express as px
 from nicegui import ui
 
 from src.db import get_conn, obtener_tipos_cuenta, obtener_config_tarjeta, guardar_config_tarjeta
-from src.fx_core import obtener_valor_dolar_sin_cache
+from src.fx_core import obtener_valor_dolar_sin_cache, obtener_valor_uf_sin_cache, obtener_inflacion_12m_sin_cache
 from src.proyeccion import (
     listar_config,
     calcular_ganancia_anual,
@@ -30,7 +30,13 @@ from src.proyeccion import (
     meses_entre,
     tasa_observada_reciente,
     simular_dap,
+    INFLACION_DEFAULT,
+    tasa_real,
+    a_pesos_de_hoy,
+    uf_futura,
 )
+from src.recurrentes import detectar_recurrentes
+from src.cuotas import listar_compras, agregar_compra, eliminar_compra, estado_compra, compromiso_por_mes
 from src.formato import clp
 from src.ui_nicegui.cache import cache_ttl, invalidar
 from src.analisis_gastos import (
@@ -68,6 +74,18 @@ def _proxima_fecha_dia(dia: int, desde: datetime.date) -> datetime.date:
         mes, anio = (desde.month % 12) + 1, desde.year + (1 if desde.month == 12 else 0)
         candidata = datetime.date(anio, mes, min(dia, calendar.monthrange(anio, mes)[1]))
     return candidata
+
+
+def _valor_uf() -> float | None:
+    return cache_ttl("valor_uf", 3600, obtener_valor_uf_sin_cache)
+
+
+def _inflacion_12m() -> float | None:
+    return cache_ttl("inflacion_12m", 3600, lambda: obtener_inflacion_12m_sin_cache(_valor_uf()))
+
+
+def _uf(valor: float) -> str:
+    return f"UF {valor:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def _cargar_datos():
@@ -269,9 +287,51 @@ def _tab_gastos(df_trans: pd.DataFrame, colores_seccion: dict):
                     "Clasificalas en la pagina Categorias para que este grafico sea mas representativo.",
                 )
 
+    _seccion_recurrentes(df_trans, color_gastos)
+
     with tarjeta("Evolucion del saldo en cuenta corriente"):
         fig = px.line(df_trans, x="fecha", y="saldo", color="cuenta", markers=True)
         plotly_chart(fig)
+
+
+def _seccion_recurrentes(df_trans: pd.DataFrame, color_gastos: str):
+    recurrentes = detectar_recurrentes(df_trans)
+    with tarjeta("\U0001F501 Gastos recurrentes y suscripciones"):
+        texto_muted(
+            "Cobros que se repiten cada mes por un monto parecido (suscripciones, seguros, PAC, transferencias "
+            "fijas), detectados solos a partir de tu cartola. Solo se muestran los que siguen activos."
+        )
+        if recurrentes.empty:
+            ui.label("No se detectaron cobros recurrentes (hacen falta al menos 3 meses de cartola con el mismo cobro).")
+            return
+
+        total_mensual = recurrentes["ultimo_monto"].sum()
+        kpi_cards([
+            ("Recurrentes activos", str(len(recurrentes)), color_gastos, "\U0001F501"),
+            ("Costo mensual", clp(total_mensual), color_gastos, "\U0001F4C5"),
+            ("Costo anual", clp(total_mensual * 12), color_gastos, "\U0001F4C6"),
+        ])
+
+        for _, r in recurrentes[recurrentes["alza_pct"].notna()].iterrows():
+            banner(
+                "warning",
+                f"**{r['comercio']}** subio de precio: el ultimo cobro fue **{clp(r['ultimo_monto'])}**, un "
+                f"**{r['alza_pct']:.0f}%** mas que lo habitual (**{clp(r['monto_tipico'])}**).",
+            )
+        for _, r in recurrentes[recurrentes["es_nuevo"]].iterrows():
+            banner(
+                "info",
+                f"Cobro recurrente nuevo: **{r['comercio']}** (**{clp(r['ultimo_monto'])}**/mes, "
+                f"**{clp(r['costo_anual'])}** al año). ¿Lo reconoces?",
+            )
+
+        df_fmt = recurrentes[["comercio", "categoria", "ultimo_monto", "costo_anual", "ultima_fecha", "proximo_cobro"]].copy()
+        df_fmt["ultimo_monto"] = df_fmt["ultimo_monto"].apply(clp)
+        df_fmt["costo_anual"] = df_fmt["costo_anual"].apply(clp)
+        df_fmt["ultima_fecha"] = df_fmt["ultima_fecha"].astype(str)
+        df_fmt["proximo_cobro"] = df_fmt["proximo_cobro"].astype(str)
+        tabla(df_fmt, {"comercio": "Comercio", "categoria": "Categoria", "ultimo_monto": "Monto mensual",
+                       "costo_anual": "Costo anual", "ultima_fecha": "Ultimo cobro", "proximo_cobro": "Proximo cobro estimado"})
 
 
 def _tab_ahorros(df_trans: pd.DataFrame, df_ahorros: pd.DataFrame, color_ahorros: str) -> pd.DataFrame:
@@ -671,6 +731,25 @@ def _tab_proyeccion(df_trans: pd.DataFrame, ultimo_por_cuenta: pd.DataFrame, col
     )
     ganancia_actual_total = proy["ganancia_estimada_1a"].sum() if not proy.empty else 0.0
 
+    # Inflacion esperada compartida por Resumen y Planificar: parte en la inflacion de los ultimos 12
+    # meses (variacion de la UF), editable por si el usuario quiere proyectar con otro supuesto. Cada
+    # sub-seccion registra en "redibujar" lo que depende de ella para repintarse al cambiarla.
+    infl_12m = _inflacion_12m()
+    infl = {"pct": round(infl_12m, 1) if infl_12m is not None else INFLACION_DEFAULT, "uf": _valor_uf(), "redibujar": []}
+    with ui.row().classes("w-full items-center gap-4"):
+        infl_input = ui.number("Inflacion esperada (% anual)", value=infl["pct"], min=-5.0, max=50.0, step=0.1, format="%.1f")
+        if infl_12m is not None:
+            texto_muted(f"Por defecto, la inflacion de los ultimos 12 meses segun la UF ({infl_12m:.1f}%). Cambiala para proyectar con otro supuesto.")
+        else:
+            texto_muted(f"No se pudo obtener la UF (sin internet), se usa la meta del Banco Central ({INFLACION_DEFAULT:.0f}%).")
+
+    def _cambio_inflacion(e):
+        infl["pct"] = float(e.value or 0.0)
+        for f in infl["redibujar"]:
+            f()
+
+    infl_input.on_value_change(_cambio_inflacion)
+
     # Submenu: la pestaña Proyeccion sola juntaba 7 bloques apilados (pedido del usuario: "mucha
     # informacion hacia abajo, hazlo un sub menu") -- se agrupan en 3 secciones cortas, mismo patron
     # de pestañas que ya se usa arriba para Gastos/Ahorros/Proyeccion/Deuda.
@@ -680,14 +759,14 @@ def _tab_proyeccion(df_trans: pd.DataFrame, ultimo_por_cuenta: pd.DataFrame, col
         st_tarjeta = ui.tab("tarjeta", label="\U0001F4B3 Tarjeta de credito")
     with ui.tab_panels(subtabs, value=st_resumen).classes("w-full"):
         with ui.tab_panel(st_resumen):
-            _sub_resumen(ultimo_por_cuenta, proy, ganancia_actual_total, config_tasas, color_proyeccion)
+            _sub_resumen(ultimo_por_cuenta, proy, ganancia_actual_total, config_tasas, color_proyeccion, infl)
         with ui.tab_panel(st_planificar):
-            _sub_planificar_aportes(df_trans, ultimo_por_cuenta, proy, config_tasas, color_proyeccion)
+            _sub_planificar_aportes(df_trans, ultimo_por_cuenta, proy, config_tasas, color_proyeccion, infl)
         with ui.tab_panel(st_tarjeta):
             _sub_tarjeta_credito(df_trans, ultimo_por_cuenta, config_tasas)
 
 
-def _sub_resumen(ultimo_por_cuenta, proy, ganancia_actual_total, config_tasas, color_proyeccion):
+def _sub_resumen(ultimo_por_cuenta, proy, ganancia_actual_total, config_tasas, color_proyeccion, infl):
     """Vista de solo lectura: donde esta la plata hoy, cuanto genera, y como repartirla mejor --
     nada que completar, solo mirar."""
     with tarjeta("Donde tengo mis ahorros"):
@@ -699,13 +778,40 @@ def _sub_resumen(ultimo_por_cuenta, proy, ganancia_actual_total, config_tasas, c
         if proy.empty:
             ui.label("Ninguna de tus cuentas con saldo tiene una tasa configurada mayor a 0.")
         else:
-            df_proy = proy.copy()
-            df_proy["saldo"] = df_proy["saldo"].apply(clp)
-            df_proy["tasa_efectiva_%"] = df_proy["tasa_efectiva_%"].map(lambda v: f"{v:.2f}%")
-            df_proy["ganancia_estimada_1a"] = df_proy["ganancia_estimada_1a"].apply(clp)
-            tabla(df_proy, {"cuenta": "Cuenta", "saldo": "Saldo actual", "tasa_efectiva_%": "Tasa anual efectiva", "ganancia_estimada_1a": "Ganancia estimada en 1 año"})
-            kpi_cards([("Ganancia total estimada en 1 año (distribucion actual)", clp(ganancia_actual_total), color_proyeccion, "\U0001F4C8")])
-            texto_muted("Estimacion simple con interes sobre el saldo actual; no considera aportes, retiros ni cambios de tasa futuros.")
+            contenedor = ui.column().classes("w-full gap-2")
+
+            def _redibujar():
+                contenedor.clear()
+                with contenedor:
+                    df_proy = proy.copy()
+                    df_proy["tasa_real_%"] = df_proy["tasa_efectiva_%"].map(lambda v: tasa_real(v, infl["pct"]))
+                    saldo_total = proy["saldo"].sum()
+                    # Ganancia real = lo que crece el poder de compra del saldo, no solo los pesos.
+                    ganancia_real = (saldo_total + ganancia_actual_total) / (1 + infl["pct"] / 100) - saldo_total
+                    pierden = df_proy[df_proy["tasa_real_%"] < 0]["cuenta"].tolist()
+
+                    df_proy["saldo"] = df_proy["saldo"].apply(clp)
+                    df_proy["tasa_efectiva_%"] = df_proy["tasa_efectiva_%"].map(lambda v: f"{v:.2f}%")
+                    df_proy["tasa_real_%"] = df_proy["tasa_real_%"].map(lambda v: f"{v:+.2f}%")
+                    df_proy["ganancia_estimada_1a"] = df_proy["ganancia_estimada_1a"].apply(clp)
+                    tabla(df_proy[["cuenta", "saldo", "tasa_efectiva_%", "tasa_real_%", "ganancia_estimada_1a"]],
+                          {"cuenta": "Cuenta", "saldo": "Saldo actual", "tasa_efectiva_%": "Tasa anual efectiva",
+                           "tasa_real_%": f"Tasa real (con {infl['pct']:.1f}% inflacion)", "ganancia_estimada_1a": "Ganancia estimada en 1 año"})
+                    kpi_cards([
+                        ("Ganancia total estimada en 1 año (distribucion actual)", clp(ganancia_actual_total), color_proyeccion, "\U0001F4C8"),
+                        ("Ganancia real (descontando inflacion)", clp(ganancia_real), color_proyeccion, "\U0001F6D2",
+                         "Poder de compra que ganas" if ganancia_real >= 0 else "Tu plata pierde poder de compra", ganancia_real >= 0),
+                    ])
+                    if pierden:
+                        banner(
+                            "warning",
+                            f"**{', '.join(pierden)}** {'rinden' if len(pierden) > 1 else 'rinde'} menos que la inflacion ({infl['pct']:.1f}%): aunque el saldo "
+                            "crezca en pesos, con esa plata vas a poder comprar menos que hoy.",
+                        )
+                    texto_muted("Estimacion simple con interes sobre el saldo actual; no considera aportes, retiros ni cambios de tasa futuros.")
+
+            infl["redibujar"].append(_redibujar)
+            _redibujar()
 
     if not proy.empty:
         with tarjeta("¿Como repartir tu plata entre tus cuentas para maximizar la ganancia?"):
@@ -735,7 +841,7 @@ def _sub_resumen(ultimo_por_cuenta, proy, ganancia_actual_total, config_tasas, c
                 )
 
 
-def _sub_planificar_aportes(df_trans, ultimo_por_cuenta, proy, config_tasas, color_proyeccion):
+def _sub_planificar_aportes(df_trans, ultimo_por_cuenta, proy, config_tasas, color_proyeccion, infl):
     """Calculadoras: donde meter la proxima plata, y que pasaria si sigo aportando hasta una fecha."""
     cuentas_con_tasa_marginal = {c: cfg for c, cfg in config_tasas.items() if cfg and cfg.get("tasa_base")}
     if cuentas_con_tasa_marginal:
@@ -782,11 +888,15 @@ def _sub_planificar_aportes(df_trans, ultimo_por_cuenta, proy, config_tasas, col
             fecha_default = datetime.date.today() + datetime.timedelta(days=365)
             fecha_input = campo_fecha(fecha_default.isoformat(), "Proyectar hasta")
             resultado_fecha = ui.column().classes("w-full gap-3")
+            salida_fecha = ui.column().classes("w-full gap-3")
+            ultimo_resultado: dict = {}
 
             def _redibujar_fecha():
                 fecha_proyeccion = datetime.date.fromisoformat(fecha_input.value) if fecha_input.value else fecha_default
                 meses_proy = meses_entre(datetime.date.today(), fecha_proyeccion)
                 resultado_fecha.clear()
+                salida_fecha.clear()
+                ultimo_resultado.clear()
                 with resultado_fecha:
                     filas_aporte = []
                     for _, fila in ultimo_por_cuenta.iterrows():
@@ -833,24 +943,47 @@ def _sub_planificar_aportes(df_trans, ultimo_por_cuenta, proy, config_tasas, col
                     texto_muted("Parte en $0 -- escribe un monto a mano si quieres proyectar aportes futuros para alguna cuenta, y presiona 'Recalcular'.")
 
             def _mostrar_resultado_fecha(filas_proy_fecha, meses_proy, fecha_proyeccion):
+                ultimo_resultado.update(filas=filas_proy_fecha, meses=meses_proy, fecha=fecha_proyeccion)
                 df_proy_fecha = pd.DataFrame(filas_proy_fecha).sort_values("saldo_proyectado", ascending=False)
                 total_actual = df_proy_fecha["saldo_actual"].sum()
                 total_aportado = df_proy_fecha["total_aportado"].sum()
                 total_intereses = df_proy_fecha["intereses_estimados"].sum()
                 total_proyectado = df_proy_fecha["saldo_proyectado"].sum()
-                kpi_cards([
-                    ("Saldo inicial (hoy)", clp(total_actual), color_proyeccion, "\U0001F4B0"),
-                    (f"A aportar ({meses_proy} meses)", clp(total_aportado), color_proyeccion, "\U00002795"),
-                    ("Ganancia (intereses)", clp(total_intereses), color_proyeccion, "\U0001F4C8"),
-                    (f"Saldo final a {fecha_proyeccion}", clp(total_proyectado), color_proyeccion, "\U0001F3C1"),
-                ])
-                df_fmt = df_proy_fecha.copy()
-                for col in ("saldo_actual", "aporte_mensual_estimado", "total_aportado", "intereses_estimados", "saldo_proyectado"):
-                    df_fmt[col] = df_fmt[col].apply(clp)
-                tabla(df_fmt, {"cuenta": "Cuenta", "saldo_actual": "Saldo actual", "aporte_mensual_estimado": "Aporte mensual",
-                                "total_aportado": f"Total a aportar ({meses_proy} meses)", "intereses_estimados": "Intereses estimados",
-                                "saldo_proyectado": f"Saldo proyectado a {fecha_proyeccion}"})
+                salida_fecha.clear()
+                with salida_fecha:
+                    kpi_cards([
+                        ("Saldo inicial (hoy)", clp(total_actual), color_proyeccion, "\U0001F4B0"),
+                        (f"A aportar ({meses_proy} meses)", clp(total_aportado), color_proyeccion, "\U00002795"),
+                        ("Ganancia (intereses)", clp(total_intereses), color_proyeccion, "\U0001F4C8"),
+                        (f"Saldo final a {fecha_proyeccion}", clp(total_proyectado), color_proyeccion, "\U0001F3C1"),
+                    ])
+                    # Mismo saldo final, expresado en poder de compra: cuanto valdria hoy, y en UF (la UF
+                    # futura se estima con la inflacion esperada de arriba).
+                    en_pesos_de_hoy = a_pesos_de_hoy(total_proyectado, infl["pct"], meses_proy)
+                    tarjetas_reales = [(
+                        f"Saldo final en pesos de hoy ({infl['pct']:.1f}% inflacion)", clp(en_pesos_de_hoy), color_proyeccion, "\U0001F6D2",
+                        f"Poder de compra: {clp(en_pesos_de_hoy - total_actual - total_aportado)} vs lo que pusiste",
+                        en_pesos_de_hoy >= total_actual + total_aportado,
+                    )]
+                    if infl["uf"]:
+                        uf_final = uf_futura(infl["uf"], infl["pct"], meses_proy)
+                        tarjetas_reales.append((
+                            f"Saldo final en UF (UF estimada {clp(uf_final)})", _uf(total_proyectado / uf_final), color_proyeccion, "\U0001F3E0",
+                            f"Hoy tienes {_uf(total_actual / infl['uf'])}", None,
+                        ))
+                    kpi_cards(tarjetas_reales)
+                    df_fmt = df_proy_fecha.copy()
+                    for col in ("saldo_actual", "aporte_mensual_estimado", "total_aportado", "intereses_estimados", "saldo_proyectado"):
+                        df_fmt[col] = df_fmt[col].apply(clp)
+                    tabla(df_fmt, {"cuenta": "Cuenta", "saldo_actual": "Saldo actual", "aporte_mensual_estimado": "Aporte mensual",
+                                    "total_aportado": f"Total a aportar ({meses_proy} meses)", "intereses_estimados": "Intereses estimados",
+                                    "saldo_proyectado": f"Saldo proyectado a {fecha_proyeccion}"})
 
+            def _redibujar_por_inflacion():
+                if ultimo_resultado:
+                    _mostrar_resultado_fecha(ultimo_resultado["filas"], ultimo_resultado["meses"], ultimo_resultado["fecha"])
+
+            infl["redibujar"].append(_redibujar_por_inflacion)
             fecha_input.on_value_change(lambda _: _redibujar_fecha())
             _redibujar_fecha()
 
@@ -860,9 +993,76 @@ def _sub_tarjeta_credito(df_trans, ultimo_por_cuenta, config_tasas):
     tanto: flotar, Dolares Premio, y el comparador de DAP."""
     estado_tc = _estado_tarjeta_credito()
     c = colores()
+    _seccion_cuotas(c["accent_orange"])
     _seccion_flotar(df_trans, ultimo_por_cuenta, config_tasas, estado_tc, {"proyeccion": c["accent_blue"], "deuda": c["danger"], "ahorros": c["success"], "patrimonio": c["accent_purple"]})
     gasto_tarjeta_mes = _gasto_tarjeta_mes(df_trans)
     _seccion_tarjeta_credito(estado_tc, df_trans, ultimo_por_cuenta, config_tasas, gasto_tarjeta_mes, {"gastos": c["accent_orange"], "ahorros": c["success"], "patrimonio": c["accent_purple"]})
+
+
+@ui.refreshable
+def _seccion_cuotas(color: str):
+    with tarjeta("\U0001F9FE Compras en cuotas"):
+        texto_muted(
+            "Registra tus compras en cuotas para ver cuanto de tus proximas facturaciones ya esta comprometido. "
+            "Las cuotas avanzan solas cada mes; no hace falta actualizarlas."
+        )
+        compras = listar_compras()
+        activas = [(cp, estado_compra(cp)) for cp in compras]
+        activas = [(cp, est) for cp, est in activas if not est["terminada"]]
+
+        if activas:
+            compromiso = compromiso_por_mes([cp for cp, _ in activas], meses=12)
+            deuda_pendiente = sum(est["saldo_pendiente"] for _, est in activas)
+            ultimo_mes = max(est["ultimo_mes"] for _, est in activas)
+            kpi_cards([
+                ("Cuotas que se facturan este mes", clp(compromiso["monto"].iloc[0]), color, "\U0001F4B3"),
+                ("Total pendiente en cuotas", clp(deuda_pendiente), color, "\U0001F9FE"),
+                ("Quedas libre de cuotas en", ultimo_mes, color, "\U0001F3C1"),
+            ])
+            fig = px.bar(compromiso, x="mes", y="monto", title="Monto comprometido en cuotas, proximos 12 meses",
+                         color_discrete_sequence=[color])
+            plotly_chart(fig)
+
+            for cp, est in activas:
+                with ui.row().classes("w-full items-center gap-3"):
+                    ui.label(
+                        f"{cp['descripcion']}: cuota {est['cuota_actual']} de {cp['total_cuotas']} "
+                        f"({clp(cp['valor_cuota'])}/mes) — quedan {est['pendientes']} ({clp(est['saldo_pendiente'])}), "
+                        f"ultima en {est['ultimo_mes']}"
+                    ).classes("flex-1")
+
+                    def _eliminar(compra_id=cp["id"]):
+                        eliminar_compra(compra_id)
+                        _seccion_cuotas.refresh()
+
+                    ui.button(icon="delete", on_click=_eliminar).props("flat dense round").tooltip("Eliminar")
+        else:
+            ui.label("No tienes compras en cuotas pendientes registradas.")
+
+        ui.label("Agregar compra en cuotas").classes("font-bold mt-2")
+        with ui.row().classes("w-full gap-3 items-end"):
+            desc_input = ui.input("Descripcion (ej: Notebook Falabella)").classes("flex-[2] min-w-[200px]")
+            valor_input = ui.number("Valor de la cuota", value=None, min=0, step=1000, format="%.0f").classes("flex-1 min-w-[140px]")
+            total_input = ui.number("Total de cuotas", value=None, min=1, max=60, step=1, format="%.0f").classes("flex-1 min-w-[120px]")
+            pagadas_input = ui.number("Cuotas ya facturadas", value=0, min=0, max=59, step=1, format="%.0f").classes("flex-1 min-w-[140px]")
+
+        def _agregar():
+            descripcion = (desc_input.value or "").strip()
+            valor = float(valor_input.value or 0)
+            total = int(total_input.value or 0)
+            pagadas = int(pagadas_input.value or 0)
+            if not descripcion or valor <= 0 or total <= 0:
+                ui.notify("Completa la descripcion, el valor de la cuota y el total de cuotas.", type="warning")
+                return
+            if pagadas >= total:
+                ui.notify("Las cuotas ya facturadas deben ser menos que el total (si ya las pagaste todas, no hace falta registrarla).", type="warning")
+                return
+            agregar_compra(descripcion, valor, total, pagadas)
+            ui.notify(f"Compra '{descripcion}' agregada.", type="positive")
+            _seccion_cuotas.refresh()
+
+        ui.button("Agregar compra", on_click=_agregar).props("color=primary")
+        texto_muted("'Cuotas ya facturadas': las que ya aparecieron en estados de cuenta anteriores. La siguiente se asume en la facturacion de este mes.")
 
 
 def _tab_deuda(df_deuda: pd.DataFrame, color_deuda: str):
@@ -905,11 +1105,14 @@ def pagina_dashboard():
         ahorros_actual = df_ahorros.sort_values("fecha").groupby("cuenta").tail(1)["saldo"].sum() if not df_ahorros.empty else 0
         deuda_actual = df_deuda.sort_values("fecha_actualizacion").tail(1)["deuda_total"].iloc[0] if not df_deuda.empty else 0
 
+        patrimonio = saldo_cc_actual + ahorros_actual - deuda_actual
+        valor_uf = _valor_uf()
         kpi_cards([
             ("Saldo cuenta corriente", clp(saldo_cc_actual), colores_seccion["proyeccion"], "\U0001F4B3"),
             ("Ahorros / inversiones", clp(ahorros_actual), colores_seccion["ahorros"], "\U0001F4B0"),
             ("Deuda CMF vigente", clp(deuda_actual), colores_seccion["deuda"], "\U0001F4C4"),
-            ("Patrimonio neto estimado", clp(saldo_cc_actual + ahorros_actual - deuda_actual), colores_seccion["patrimonio"], "\U00002696"),
+            ("Patrimonio neto estimado", clp(patrimonio), colores_seccion["patrimonio"], "\U00002696",
+             f"≈ {_uf(patrimonio / valor_uf)} (UF hoy: {clp(valor_uf)})" if valor_uf else None, None),
         ])
 
         with ui.tabs().classes("w-full") as tabs:

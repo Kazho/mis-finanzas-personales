@@ -5,7 +5,6 @@ venv/
 .buildvenv/
 data/finanzas.db
 data/ejemplos/
-.streamlit/secrets.toml
 .claude/
 
 # Salida de empaquetado (PyInstaller + Inno Setup) -- se regenera con build_installer,

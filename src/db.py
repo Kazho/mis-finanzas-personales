@@ -134,6 +134,11 @@ CREATE TABLE IF NOT EXISTS tarjeta_config (
 CREATE TABLE IF NOT EXISTS categorias_extra (
     nombre TEXT PRIMARY KEY
 );
+
+CREATE TABLE IF NOT EXISTS categoria_bucket (
+    categoria TEXT PRIMARY KEY,
+    bucket TEXT NOT NULL
+);
 """
 
 MIGRACIONES = [

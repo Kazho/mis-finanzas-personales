@@ -6,7 +6,9 @@ tambien cuenta para llegar antes a la meta, no solo lo que aportas tu.
 
 El aporte y la tasa a usar dependen del alcance de la meta:
 - Cuenta especifica: se usa la tasa configurada de esa cuenta (con sus tramos si tiene), y el
-  aporte mensual sale del crecimiento real del saldo entre su primer y ultimo snapshot.
+  aporte mensual sale de la mediana del crecimiento real del saldo entre snapshots consecutivos
+  (ver `ritmo_mensual_cuenta`) -- se puede sobreescribir a mano en la tabla de "Proyeccion a una
+  fecha" del Dashboard cuando el numero automatico no tiene sentido (ej. un deposito unico).
 - Total de tus ahorros: no hay una sola tasa (cada cuenta puede tener la suya), asi que se usa
   una tasa promedio ponderada por saldo entre todas tus cuentas configuradas, y el aporte
   mensual sale del promedio reciente de transferencias a categorias de ahorro/inversion en tu
@@ -48,14 +50,26 @@ def eliminar_meta(meta_id: int):
 
 
 def ritmo_mensual_cuenta(df_ahorros: pd.DataFrame, cuenta: str) -> float | None:
+    """Aporte mensual promedio de una cuenta, estimado como la MEDIANA (no el promedio, y no
+    solo primer-vs-ultimo registro) de la tasa mensual equivalente entre cada par de registros
+    consecutivos. La mediana evita que un salto puntual entre dos registros (ej. el deposito
+    inicial al abrir la cuenta, o un aporte unico grande) distorsione toda la estimacion --
+    comparar solo el primer registro contra el ultimo (o promediar sin mas) queda dominado por
+    ese salto igual que si fuera un aporte mensual real."""
     df = df_ahorros[df_ahorros["cuenta"] == cuenta].sort_values("fecha")
     if len(df) < 2:
         return None
-    primero, ultimo = df.iloc[0], df.iloc[-1]
-    meses = (ultimo["fecha"] - primero["fecha"]).days / 30.44
-    if meses < 0.5:
+    tasas = []
+    for (_, anterior), (_, actual) in zip(df.iloc[:-1].iterrows(), df.iloc[1:].iterrows()):
+        meses = (actual["fecha"] - anterior["fecha"]).days / 30.44
+        if meses < 0.1:
+            continue
+        tasas.append((actual["saldo"] - anterior["saldo"]) / meses)
+    if not tasas:
         return None
-    return (ultimo["saldo"] - primero["saldo"]) / meses
+    tasas.sort()
+    n = len(tasas)
+    return tasas[n // 2] if n % 2 else (tasas[n // 2 - 1] + tasas[n // 2]) / 2
 
 
 def ritmo_mensual_total(df_trans: pd.DataFrame) -> float | None:

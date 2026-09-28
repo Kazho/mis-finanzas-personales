@@ -121,6 +121,48 @@ def calcular_ganancia_anual(saldo: float, config: dict | None) -> float:
     return _ganancia_periodo(saldo, config, DIAS_ANIO)
 
 
+def tasa_observada_reciente(df_ahorros) -> "pd.DataFrame":
+    """Para cada cuenta con al menos 2 snapshots que traigan 'rentabilidad_generada' (el campo
+    opcional de 'Registrar Ahorro' donde el usuario copia el rendimiento acumulado que la propia
+    fintech le muestra), despeja la tasa anual que ESA cuenta realmente pago en el ultimo periodo
+    entre dos snapshots consecutivos.
+
+    Se usa el incremento de 'rentabilidad_generada', no el del saldo, porque el saldo tambien se
+    mueve por depositos/retiros que la app no puede distinguir en cuentas sin cartola (Tenpo, Mach,
+    etc. no entregan un PDF de movimientos) -- la rentabilidad acumulada que la fintech muestra, en
+    cambio, sube solo por interes, asi que su delta aisla exactamente lo que se gano.
+
+    Sirve para avisar cuando la tasa real diverge de la que el usuario configuro en 'Registrar
+    Ahorro' (letra chica, cambios de condiciones, topes superados) -- la app solo informa, nunca
+    ajusta la tasa configurada por su cuenta."""
+    import pandas as pd
+
+    filas = []
+    con_rentabilidad = df_ahorros.dropna(subset=["rentabilidad_generada"])
+    for cuenta, grupo in con_rentabilidad.groupby("cuenta"):
+        g = grupo.sort_values("fecha")
+        if len(g) < 2:
+            continue
+        inicio, fin = g.iloc[-2], g.iloc[-1]
+        dias = (fin["fecha"] - inicio["fecha"]).days
+        saldo_promedio = (float(fin["saldo"]) + float(inicio["saldo"])) / 2
+        if dias <= 0 or saldo_promedio <= 0:
+            continue
+        rendimiento_periodo = float(fin["rentabilidad_generada"]) - float(inicio["rentabilidad_generada"])
+        tasa_pct = ((1 + rendimiento_periodo / saldo_promedio) ** (DIAS_ANIO / dias) - 1) * 100
+        filas.append(
+            {
+                "cuenta": cuenta,
+                "desde": inicio["fecha"],
+                "hasta": fin["fecha"],
+                "dias": dias,
+                "rendimiento_periodo": rendimiento_periodo,
+                "tasa_observada_%": tasa_pct,
+            }
+        )
+    return pd.DataFrame(filas)
+
+
 def evaluar_plan_con_costo(saldo: float, config: dict | None) -> dict | None:
     """Para tramos con costo mensual (ej. un plan premium): compara activarlo o no al saldo actual.
 

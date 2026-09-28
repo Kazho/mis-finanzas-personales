@@ -8,11 +8,10 @@
 # ajuste esta atado a la version exacta con la que se probo -- un `pip install -U` entre builds
 # podria reintroducir errores de PackageNotFoundError/ModuleNotFoundError ya resueltos.
 pyinstaller==6.22.2
-streamlit==1.62.0
+nicegui==3.16.0
 pandas==3.0.5
 plotly==7.0.0
 pdfplumber==0.11.10
 pyarrow==25.0.1
 pypdfium2==5.13.0
-click==8.5.0
 requests==2.34.2

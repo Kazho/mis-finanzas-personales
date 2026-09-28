@@ -66,6 +66,27 @@ CATEGORIAS_DEFAULT = [
 
 SIN_CATEGORIA = "Sin categoria"
 
+BUCKETS = ("Necesidad", "Gusto", "Ahorro")
+SIN_CLASIFICAR = "Sin clasificar"
+
+# Solo las categorias por defecto inequivocas -- las ambiguas (Estacionamiento, Pago tarjeta de
+# credito, Pago linea de credito, Transferencia enviada, Comisiones bancarias) y cualquier
+# categoria propia del usuario quedan "Sin clasificar" a proposito: es mejor que el usuario las
+# clasifique el mismo a que la app adivine mal y el grafico 50/30/20 salga enganoso. Las
+# categorias de ahorro/inversion (`es_categoria_ahorro`) se clasifican solas como "Ahorro" en
+# tiempo de calculo, no hace falta sembrarlas aqui.
+BUCKETS_DEFAULT = {
+    "Comida y almacen": "Necesidad",
+    "Transporte": "Necesidad",
+    "Combustible": "Necesidad",
+    "Salud": "Necesidad",
+    "Servicios basicos": "Necesidad",
+    "Seguros": "Necesidad",
+    "Restaurantes y delivery": "Gusto",
+    "Suscripciones": "Gusto",
+    "Retail y compras": "Gusto",
+}
+
 
 def _cargar_reglas() -> list[tuple[str, str]]:
     with get_conn() as conn:
@@ -82,6 +103,32 @@ def asegurar_reglas_default():
                 "INSERT OR IGNORE INTO categoria_reglas (palabra_clave, categoria) VALUES (?, ?)",
                 (palabra, categoria),
             )
+
+
+def asegurar_buckets_default():
+    with get_conn() as conn:
+        for categoria, bucket in BUCKETS_DEFAULT.items():
+            conn.execute(
+                "INSERT OR IGNORE INTO categoria_bucket (categoria, bucket) VALUES (?, ?)",
+                (categoria, bucket),
+            )
+
+
+def obtener_categoria_buckets() -> dict[str, str]:
+    with get_conn() as conn:
+        rows = conn.execute("SELECT categoria, bucket FROM categoria_bucket").fetchall()
+    return {r["categoria"]: r["bucket"] for r in rows}
+
+
+def guardar_categoria_bucket(categoria: str, bucket: str):
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO categoria_bucket (categoria, bucket) VALUES (?, ?)
+            ON CONFLICT(categoria) DO UPDATE SET bucket = excluded.bucket
+            """,
+            (categoria, bucket),
+        )
 
 
 def categorizar(descripcion: str) -> str:

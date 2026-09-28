@@ -1,18 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
 """Build onedir: `pyinstaller MisFinanzasPersonales.spec --noconfirm`.
 
-launcher.py es el unico modulo que PyInstaller analiza/compila de verdad. app.py, vistas/ y
-src/ viajan como archivos de datos planos (no compilados) porque Streamlit lee y ejecuta
-vistas/*.py directo del disco por su ruta de archivo (st.Page("vistas/....py", ...)), no via
-el sistema de imports — si PyInstaller los "congela" dentro del bundle en vez de dejarlos como
-archivos reales, Streamlit no los encuentra.
+A diferencia de la version Streamlit anterior, launcher.py y todo lo que importa (paginas_nicegui/,
+src/) se compilan normalmente -- NiceGUI arma las paginas con @ui.page() + imports de Python
+normales, no lee archivos por ruta como hacia Streamlit con st.Page(), asi que ya no hace falta
+declarar esas carpetas como datas planos ni excluirlas del analisis estatico.
 
-Los paquetes de terceros que SI importa ese codigo (pandas, plotly, pdfplumber, requests) no
-los ve el analisis estatico de PyInstaller porque nunca se importan directamente desde
-launcher.py, asi que hay que declararlos a mano como hiddenimports/datas. Si al correr el
-.exe aparece ModuleNotFoundError o PackageNotFoundError de algun paquete que falta aqui,
-agregarlo a las listas de abajo (streamlit en particular hace lookups de version via
-importlib.metadata en tiempo de ejecucion, de ahi el copy_metadata).
+pyinstaller-hooks-contrib trae hooks dedicados para nicegui (sus assets estaticos del frontend, ver
+hook-nicegui.py) y uvicorn (sus implementaciones de protocolo/loop, que se cargan dinamicamente, ver
+hook-uvicorn.py) -- se detectan solos durante el analisis porque el paquete esta instalado, no hace
+falta declararlos a mano aca. Si al correr el .exe aparece ModuleNotFoundError/PackageNotFoundError de
+algun paquete que falta, agregarlo a las listas de abajo.
 """
 from PyInstaller.utils.hooks import (
     collect_data_files,
@@ -21,22 +19,16 @@ from PyInstaller.utils.hooks import (
     copy_metadata,
 )
 
-PAQUETES_TERCEROS = ("streamlit", "pandas", "plotly", "pdfplumber", "pyarrow", "click", "requests")
+PAQUETES_TERCEROS = ("nicegui", "pandas", "plotly", "pdfplumber", "pyarrow", "requests")
 
-datas = [
-    ("app.py", "."),
-    ("vistas", "vistas"),
-    ("src", "src"),
-    (".streamlit", ".streamlit"),
-    ("VERSION", "."),
-]
+datas = [("VERSION", ".")]
 for paquete in PAQUETES_TERCEROS:
     datas += copy_metadata(paquete)
-datas += collect_data_files("streamlit")
 datas += collect_data_files("plotly")
 datas += collect_data_files("pypdfium2")
 
 binaries = collect_dynamic_libs("pypdfium2")
+
 
 def _submodulos_sin_tests(paquete):
     # pandas/plotly incluyen su propia suite de tests como submodulos normales -- sin este
@@ -48,7 +40,7 @@ def _submodulos_sin_tests(paquete):
 
 
 hiddenimports = ["requests", "pypdfium2"]
-for paquete in ("streamlit", "pandas", "plotly", "pdfplumber"):
+for paquete in ("nicegui", "pandas", "plotly", "pdfplumber"):
     hiddenimports += _submodulos_sin_tests(paquete)
 
 a = Analysis(

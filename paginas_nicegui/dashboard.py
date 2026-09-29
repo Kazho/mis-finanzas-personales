@@ -18,6 +18,8 @@ import pandas as pd
 import plotly.express as px
 from nicegui import ui
 
+from src.conciliacion import CATEGORIA_TRASPASO
+from src.cuentas import preparar_transacciones
 from src.db import get_conn, obtener_tipos_cuenta, obtener_config_tarjeta, guardar_config_tarjeta
 from src.fx_core import obtener_valor_dolar_sin_cache, obtener_valor_uf_sin_cache, obtener_inflacion_12m_sin_cache
 from src.proyeccion import (
@@ -92,7 +94,8 @@ def _cargar_datos():
     with get_conn() as conn:
         df_trans = pd.read_sql_query(
             """
-            SELECT t.id, t.fecha, t.descripcion, t.sucursal, t.monto_cargo, t.monto_abono, t.saldo, t.categoria, c.nombre AS cuenta
+            SELECT t.id, t.fecha, t.descripcion, t.sucursal, t.monto_cargo, t.monto_abono, t.saldo, t.categoria,
+                   t.categoria_manual, COALESCE(NULLIF(c.alias, ''), c.nombre) AS cuenta, c.tipo, c.moneda, c.archivada
             FROM transacciones t JOIN cuentas c ON c.id = t.cuenta_id
             ORDER BY t.fecha, t.id
             """,
@@ -108,16 +111,29 @@ def _cargar_datos():
         )
         df_saldo_snapshot = pd.read_sql_query(
             """
-            SELECT c.nombre AS cuenta, s.fecha, s.saldo
+            SELECT COALESCE(NULLIF(c.alias, ''), c.nombre) AS cuenta, s.fecha, s.saldo
             FROM saldo_snapshot s JOIN cuentas c ON c.id = s.cuenta_id
+            WHERE c.tipo NOT IN ('tarjeta', 'inversion') AND c.moneda = 'CLP' AND c.archivada = 0
             ORDER BY s.fecha
             """,
             conn,
         )
+        # Inversiones cargadas por cartola: van con "Ahorros / inversiones", no con el saldo de cuenta corriente.
+        inversion_filas = conn.execute(
+            """
+            SELECT c.moneda, s.saldo FROM saldo_snapshot s JOIN cuentas c ON c.id = s.cuenta_id
+            WHERE c.tipo = 'inversion' AND c.archivada = 0
+              AND s.fecha = (SELECT MAX(fecha) FROM saldo_snapshot WHERE cuenta_id = c.id)
+            GROUP BY c.id
+            """
+        ).fetchall()
     for df, col in ((df_trans, "fecha"), (df_deuda, "fecha_actualizacion"), (df_ahorros, "fecha"), (df_saldo_snapshot, "fecha")):
         if not df.empty:
             df[col] = pd.to_datetime(df[col])
-    return df_trans, df_deuda, df_ahorros, df_saldo_snapshot
+    dolar = cache_ttl("valor_dolar", 3600, obtener_valor_dolar_sin_cache)
+    df_trans = preparar_transacciones(df_trans, dolar)
+    inversion_cuentas = sum(f["saldo"] * (dolar or 0.0 if f["moneda"] == "USD" else 1.0) for f in inversion_filas)
+    return df_trans, df_deuda, df_ahorros, df_saldo_snapshot, inversion_cuentas
 
 
 def _tab_gastos(df_trans: pd.DataFrame, colores_seccion: dict):
@@ -199,7 +215,7 @@ def _tab_gastos(df_trans: pd.DataFrame, colores_seccion: dict):
                     df_periodo.loc[es_gasto_mask, "monto_cargo"].sum() - df_periodo.loc[es_gasto_mask, "monto_abono"].sum()
                 )
                 total_ahorro_periodo = df_periodo.loc[es_ahorro_mask, "monto_cargo"].sum()
-                total_ingresos = df_periodo["monto_abono"].sum()
+                total_ingresos = df_periodo.loc[df_periodo["categoria"] != CATEGORIA_TRASPASO, "monto_abono"].sum()
 
                 kpi_cards(
                     [
@@ -290,7 +306,7 @@ def _tab_gastos(df_trans: pd.DataFrame, colores_seccion: dict):
     _seccion_recurrentes(df_trans, color_gastos)
 
     with tarjeta("Evolucion del saldo en cuenta corriente"):
-        fig = px.line(df_trans, x="fecha", y="saldo", color="cuenta", markers=True)
+        fig = px.line(df_trans.dropna(subset=["saldo"]), x="fecha", y="saldo", color="cuenta", markers=True)
         plotly_chart(fig)
 
 
@@ -1084,11 +1100,25 @@ def pagina_dashboard():
         }
         ui.label("Dashboard Financiero").classes("text-2xl font-bold")
 
-        df_trans, df_deuda, df_ahorros, df_saldo_snapshot = _cargar_datos()
+        df_trans, df_deuda, df_ahorros, df_saldo_snapshot, inversion_cuentas = _cargar_datos()
 
         if df_trans.empty and df_deuda.empty and df_ahorros.empty:
             ui.label("Aun no hay datos cargados. Ve a 'Cargar Cartola', 'Cargar Deuda CMF' o 'Registrar Ahorro' para empezar.")
             return
+
+        n_conciliados = df_trans.attrs.get("n_conciliados", 0)
+        if n_conciliados:
+            texto_muted(
+                f"{n_conciliados} movimiento(s) entre tus propias cuentas (pagos de tarjeta, traspasos) se concilian "
+                "solos y no cuentan como gasto ni ingreso, para no duplicar."
+            )
+        if df_trans.attrs.get("n_usd_convertidos"):
+            texto_muted(
+                f"{df_trans.attrs['n_usd_convertidos']} movimiento(s) en USD se convierten a pesos al dolar de hoy "
+                "(aproximado: cada banco aplica su propio tipo de cambio)."
+            )
+        if df_trans.attrs.get("n_usd_omitidos"):
+            banner("warning", f"No se pudo consultar el dolar: {df_trans.attrs['n_usd_omitidos']} movimiento(s) en USD quedaron fuera de los totales en pesos.")
 
         ultimo_trans = (
             df_trans.sort_values("fecha").groupby("cuenta").tail(1)[["cuenta", "fecha", "saldo"]]
@@ -1102,7 +1132,7 @@ def pagina_dashboard():
         if not saldo_actual_por_cuenta.empty:
             saldo_actual_por_cuenta = saldo_actual_por_cuenta.sort_values("fecha").groupby("cuenta").tail(1)
         saldo_cc_actual = saldo_actual_por_cuenta["saldo"].sum() if not saldo_actual_por_cuenta.empty else 0
-        ahorros_actual = df_ahorros.sort_values("fecha").groupby("cuenta").tail(1)["saldo"].sum() if not df_ahorros.empty else 0
+        ahorros_actual = (df_ahorros.sort_values("fecha").groupby("cuenta").tail(1)["saldo"].sum() if not df_ahorros.empty else 0) + inversion_cuentas
         deuda_actual = df_deuda.sort_values("fecha_actualizacion").tail(1)["deuda_total"].iloc[0] if not df_deuda.empty else 0
 
         patrimonio = saldo_cc_actual + ahorros_actual - deuda_actual

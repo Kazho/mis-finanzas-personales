@@ -163,9 +163,26 @@ CREATE TABLE IF NOT EXISTS compras_cuotas (
     mes_primera_cuota TEXT NOT NULL,
     fecha_registro TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS tc_estados (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cuenta_id INTEGER NOT NULL REFERENCES cuentas(id),
+    periodo_hasta TEXT NOT NULL,
+    monto_facturado REAL,
+    pago_minimo REAL,
+    fecha_vencimiento TEXT,
+    cupo_total REAL,
+    cupo_utilizado REAL,
+    cupo_disponible REAL,
+    UNIQUE(cuenta_id, periodo_hasta)
+);
 """
 
 MIGRACIONES = [
+    ("cuentas", "tipo", "ALTER TABLE cuentas ADD COLUMN tipo TEXT NOT NULL DEFAULT 'corriente'"),
+    ("cuentas", "moneda", "ALTER TABLE cuentas ADD COLUMN moneda TEXT NOT NULL DEFAULT 'CLP'"),
+    ("cuentas", "alias", "ALTER TABLE cuentas ADD COLUMN alias TEXT"),
+    ("cuentas", "archivada", "ALTER TABLE cuentas ADD COLUMN archivada INTEGER NOT NULL DEFAULT 0"),
     ("ahorros_config", "costo_mensual", "ALTER TABLE ahorros_config ADD COLUMN costo_mensual REAL"),
     (
         "transacciones",
@@ -215,20 +232,51 @@ def init_db():
             columnas = {r["name"] for r in conn.execute(f"PRAGMA table_info({tabla})").fetchall()}
             if columna not in columnas:
                 conn.execute(alter)
+                if (tabla, columna) == ("cuentas", "tipo"):
+                    # Las cuentas ya cargadas antes de existir el tipo quedan como 'corriente'; la
+                    # CuentaRUT de BancoEstado es cuenta vista, y se corrige solo esta vez para no pisar
+                    # lo que el usuario edite despues.
+                    conn.execute("UPDATE cuentas SET tipo = 'vista' WHERE banco = 'BancoEstado'")
     # CREATE/ALTER no cuentan en total_changes, asi que get_conn no detecta que hay que guardar.
     boveda.guardar()
 
 
-def get_or_create_cuenta(nombre: str, banco: str = None, numero_cuenta: str = None) -> int:
+def get_or_create_cuenta(nombre: str, banco: str = None, numero_cuenta: str = None,
+                         tipo: str = "corriente", moneda: str = "CLP") -> int:
+    """Si la cuenta ya existe se devuelve tal cual: tipo y moneda solo se fijan al crearla, para no
+    pisar lo que el usuario haya corregido a mano en la pagina Cuentas."""
     with get_conn() as conn:
         row = conn.execute("SELECT id FROM cuentas WHERE nombre = ?", (nombre,)).fetchone()
         if row:
             return row["id"]
         cur = conn.execute(
-            "INSERT INTO cuentas (nombre, banco, numero_cuenta) VALUES (?, ?, ?)",
-            (nombre, banco, numero_cuenta),
+            "INSERT INTO cuentas (nombre, banco, numero_cuenta, tipo, moneda) VALUES (?, ?, ?, ?, ?)",
+            (nombre, banco, numero_cuenta, tipo, moneda),
         )
         return cur.lastrowid
+
+
+def guardar_estado_tc(cuenta_id: int, estado: dict):
+    """Datos de cabecera de un estado de cuenta de tarjeta (cupo, monto a pagar, vencimiento). Se
+    reemplaza si se vuelve a cargar el mismo periodo."""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO tc_estados (cuenta_id, periodo_hasta, monto_facturado, pago_minimo, fecha_vencimiento,
+                                    cupo_total, cupo_utilizado, cupo_disponible)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(cuenta_id, periodo_hasta) DO UPDATE SET
+                monto_facturado = excluded.monto_facturado, pago_minimo = excluded.pago_minimo,
+                fecha_vencimiento = excluded.fecha_vencimiento, cupo_total = excluded.cupo_total,
+                cupo_utilizado = excluded.cupo_utilizado, cupo_disponible = excluded.cupo_disponible
+            """,
+            (
+                cuenta_id, estado["periodo_hasta"].isoformat(), estado.get("monto_facturado"),
+                estado.get("pago_minimo"),
+                estado["fecha_vencimiento"].isoformat() if estado.get("fecha_vencimiento") else None,
+                estado.get("cupo_total"), estado.get("cupo_utilizado"), estado.get("cupo_disponible"),
+            ),
+        )
 
 
 def obtener_tipos_cuenta() -> dict[str, str]:

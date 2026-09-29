@@ -17,8 +17,10 @@ from src.ui_nicegui.theme import alternar_modo, colores, registrar_dark_mode
 
 PAGINAS = [
     ("/", "Inicio", "home"),
+    ("/panorama", "Panorama", "pie_chart"),
     ("/dashboard", "Dashboard", "insights"),
     ("/categorias", "Categorias", "sell"),
+    ("/cuentas", "Cuentas", "credit_card"),
     ("/cargar-cartola", "Cargar Cartola", "description"),
     ("/cargar-deuda-cmf", "Cargar Deuda CMF", "account_balance"),
     ("/registrar-ahorro", "Registrar Ahorro", "savings"),

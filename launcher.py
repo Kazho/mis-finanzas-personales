@@ -62,9 +62,11 @@ def main():
         cargar_cartola,
         cargar_deuda_cmf,
         categorias,
+        cuentas,
         dashboard,
         desbloquear,
         inicio,
+        panorama,
         registrar_ahorro,
     )
 

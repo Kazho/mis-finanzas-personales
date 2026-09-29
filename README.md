@@ -42,9 +42,10 @@ digitalmente) — click en "Más información" → "Ejecutar de todas formas".
 
 ## Qué puedes hacer con la app
 
-- **Cargar cartolas** de Banco de Chile o CuentaRUT de BancoEstado (PDF) y clasificar tus movimientos automáticamente por categoría, con detección de duplicados si vuelves a cargar el mismo período.
+- **Cargar cartolas** de Banco de Chile, CuentaRUT de BancoEstado o el estado de cuenta de tarjeta de crédito Santander (PDF) y clasificar tus movimientos automáticamente por categoría, con detección de duplicados si vuelves a cargar el mismo período.
 - **Cargar informes de deuda CMF** (PDF) para hacer seguimiento a tu deuda vigente en el sistema financiero.
 - **Registrar ahorros** de cuentas que no entregan cartola (Mach, Tenpo, Mercado Pago, etc.), configurar su tasa de interés anual y ver una proyección de cuánto generarías dejando la plata donde está, o repartiéndola distinto entre tus cuentas.
+- **Panorama** y **Cuentas**: todas tus cuentas de todos los bancos en una sola vista. Cada cuenta tiene un tipo (corriente, vista, ahorro, inversión, tarjeta de crédito) y una moneda (CLP o USD): lo disponible y lo invertido se separa de la deuda de tarjetas, y las cuentas en USD se muestran en dólares con un equivalente aproximado en pesos. Los pagos de tarjeta y los traspasos entre tus propias cuentas se concilian solos para no contarlos dos veces como gasto.
 - **Dashboard** con gasto por categoría, comparación mes a mes, alertas de gasto inusual, metas de ahorro, evolución de tu deuda y tu saldo, detección automática de gastos recurrentes y suscripciones (con aviso si suben de precio), proyecciones en UF y en términos reales (descontando inflación), seguimiento de compras en cuotas, y una sección de "Dólares Premio" para tarjetas de crédito con recompensas.
 - **Categorías** completamente editables: reglas de categorización automática por palabra clave, categorías propias sin regla asociada, y ajuste manual de la categoría de cualquier transacción ya cargada.
 - Modo claro y oscuro, intercambiables desde el boton en la parte superior.

@@ -14,11 +14,12 @@ from pdfminer.pdfdocument import PDFPasswordIncorrect
 from pdfplumber.utils.exceptions import PdfminerException
 
 from src.categorias import categorizar, listar_categorias
-from src.db import get_conn, get_or_create_cuenta, guardar_saldo_snapshot
+from src.db import get_conn, get_or_create_cuenta, guardar_estado_tc, guardar_saldo_snapshot
 from src.formato import clp
 from src.parser_bancoestado import es_bancoestado_cuentarut, parse_cartola_bancoestado
 from src.parser_cartola import parse_cartola
 from src.parser_movimientos import es_movimientos, parse_movimientos
+from src.parser_tarjeta_credito import es_tarjeta_credito, parse_tarjeta_credito
 from src.ui_nicegui.components import banner, kpi_cards, texto_muted
 from src.ui_nicegui.editable_table import editable_table
 from src.ui_nicegui.layout import layout
@@ -33,7 +34,7 @@ def pagina_cargar_cartola():
         texto_muted(
             "Soporta la cartola oficial mensual de Banco de Chile ('Estado de Cuenta'), el PDF de "
             "'Movimientos al [fecha]' que puedes descargar en cualquier momento desde tu banca en linea de "
-            "Banco de Chile, y la cartola CuentaRUT de BancoEstado. Puedes cargar varios sin miedo a "
+            "Banco de Chile, la cartola CuentaRUT de BancoEstado y el estado de cuenta de tarjeta de credito Santander. Puedes cargar varios sin miedo a "
             "duplicar: si un movimiento ya lo cargaste, no se repite al cargar otro documento que lo "
             "incluya de nuevo."
         )
@@ -51,7 +52,7 @@ def pagina_cargar_cartola():
                 if not isinstance(e.args[0] if e.args else None, PDFPasswordIncorrect):
                     banner("error", f"No se pudo leer el PDF. Detalle: {e}")
                     return
-                banner("warning", "Este PDF esta protegido con contraseña (comun en las cartolas CuentaRUT de BancoEstado).")
+                banner("warning", "Este PDF esta protegido con contraseña (comun en las cartolas CuentaRUT de BancoEstado y en los estados de cuenta de tarjeta).")
                 pw_input = ui.input("Contraseña del PDF", password=True, password_toggle_button=True)
 
                 def _desbloquear():
@@ -62,10 +63,13 @@ def pagina_cargar_cartola():
                 return
 
             es_tipo_bancoestado = es_bancoestado_cuentarut(texto_pagina1)
-            es_tipo_movimientos = es_movimientos(texto_pagina1) if not es_tipo_bancoestado else False
+            es_tipo_tarjeta = es_tarjeta_credito(texto_pagina1)
+            es_tipo_movimientos = es_movimientos(texto_pagina1) if not (es_tipo_bancoestado or es_tipo_tarjeta) else False
 
             try:
-                if es_tipo_bancoestado:
+                if es_tipo_tarjeta:
+                    resultado = parse_tarjeta_credito(io.BytesIO(estado["contenido"]), password=estado["password"])
+                elif es_tipo_bancoestado:
                     resultado = parse_cartola_bancoestado(io.BytesIO(estado["contenido"]), password=estado["password"])
                 elif es_tipo_movimientos:
                     resultado = parse_movimientos(io.BytesIO(estado["contenido"]))
@@ -82,6 +86,7 @@ def pagina_cargar_cartola():
             nombre_cuenta = f"{resultado['banco']} - {resultado['numero_cuenta']}"
             tipo_documento = (
                 "Movimientos al dia" if es_tipo_movimientos
+                else "Estado de cuenta tarjeta de credito" if es_tipo_tarjeta
                 else "Cartola CuentaRUT" if es_tipo_bancoestado
                 else "Cartola oficial"
             )
@@ -94,11 +99,13 @@ def pagina_cargar_cartola():
                 ("Cuenta", nombre_cuenta, c["accent_blue"], "\U0001F3E6"),
                 ("Tipo de documento", tipo_documento, c["accent_blue"], "\U0001F4C4"),
                 ("Periodo" if not es_tipo_movimientos else "Movimientos al", periodo, c["accent_blue"], "\U0001F4C5"),
-                ("Saldo final", clp(resultado["saldo_final"]), c["accent_blue"], "\U0001F4B0"),
+                ("Monto facturado a pagar" if es_tipo_tarjeta else "Saldo final", clp(resultado["saldo_final"]), c["accent_blue"], "\U0001F4B0"),
             ])
 
             if resultado["cuadratura_ok"] is None:
                 banner("info", "Este documento no trae saldo inicial explicito, asi que no se puede verificar la cuadratura — cada fila usa el saldo que trae el propio PDF.")
+            elif resultado["cuadratura_ok"] and es_tipo_tarjeta:
+                banner("success", "Cuadratura correcta: la suma de compras y cuotas coincide con el total de operaciones del estado de cuenta.")
             elif resultado["cuadratura_ok"]:
                 banner("success", "Cuadratura correcta: saldo inicial + movimientos = saldo final.")
             else:
@@ -120,7 +127,10 @@ def pagina_cargar_cartola():
             ]
 
             def _guardar(_originales, editados):
-                cuenta_id = get_or_create_cuenta(nombre_cuenta, banco=resultado["banco"], numero_cuenta=resultado["numero_cuenta"])
+                cuenta_id = get_or_create_cuenta(
+                    nombre_cuenta, banco=resultado["banco"], numero_cuenta=resultado["numero_cuenta"],
+                    tipo=resultado.get("tipo_cuenta", "corriente"), moneda=resultado.get("moneda", "CLP"),
+                )
                 nuevas, duplicadas = 0, 0
                 with get_conn() as conn:
                     for i, t in enumerate(resultado["transacciones"]):
@@ -144,6 +154,8 @@ def pagina_cargar_cartola():
                         else:
                             duplicadas += 1
 
+                if resultado.get("estado_tc"):
+                    guardar_estado_tc(cuenta_id, resultado["estado_tc"])
                 if resultado["saldo_final"] is not None and resultado["saldo_disponible_fecha"] is not None:
                     guardar_saldo_snapshot(
                         cuenta_id, resultado["saldo_disponible_fecha"].isoformat(),

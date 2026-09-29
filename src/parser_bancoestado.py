@@ -180,5 +180,7 @@ def parse_cartola_bancoestado(path, password: str | None = None) -> dict:
         "saldo_disponible_fecha": hasta,
         "saldo_disponible_hora": None,
         "cuadratura_ok": cuadratura_ok,
+        "tipo_cuenta": "vista",
+        "moneda": "CLP",
         "transacciones": transacciones,
     }

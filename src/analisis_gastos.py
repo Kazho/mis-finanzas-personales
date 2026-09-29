@@ -2,9 +2,10 @@
 import pandas as pd
 
 from src.categorias import BUCKETS, SIN_CLASIFICAR
+from src.conciliacion import CATEGORIA_TRASPASO
 
 CATEGORIAS_POSITIVAS = ("ahorro", "inversion", "inversión")
-CATEGORIAS_INGRESO = ("ingreso", "transferencia recibida")
+CATEGORIAS_INGRESO = ("ingreso", "transferencia recibida", CATEGORIA_TRASPASO.lower())
 
 
 def es_categoria_ahorro(categoria: str) -> bool:
@@ -19,7 +20,9 @@ def es_categoria_ahorro(categoria: str) -> bool:
 
 def es_categoria_ingreso(categoria: str) -> bool:
     """Categorias que representan ingresos genuinos (sueldo, transferencias recibidas sin
-    asociar a un gasto propio), para no restarlas del gasto al netear cargos y abonos.
+    asociar a un gasto propio) o movimientos entre tus propias cuentas ya conciliados (pago de
+    tarjeta, traspasos: no son ni gasto ni ingreso), para no restarlos del gasto al netear cargos
+    y abonos.
 
     Si quieres que un abono SI descuente del gasto (ej. te devuelven tu parte de una salida
     grupal), categorizalo con la MISMA categoria del gasto original en vez de dejarlo aqui.

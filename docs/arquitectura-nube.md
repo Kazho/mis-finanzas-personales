@@ -160,12 +160,65 @@ carga de PDFs en el escritorio al principio; evaluar nativa cuando haya usuarios
 
 ## 9. Programa de seguridad (lo que respalda la promesa)
 
-1. Modelo de amenazas escrito (qué protege el E2EE y qué no: un teléfono con malware, por ejemplo).
-2. Revisión del diseño criptográfico y pentest por terceros antes de cobrar.
-3. Firma de código del instalador (hoy no está firmado) y de las apps móviles.
-4. Escaneo de dependencias en CI, secretos fuera del repositorio, 2FA en todas las cuentas del equipo.
-5. Plan de respuesta a incidentes y canal para reportar vulnerabilidades.
-6. Definir la licencia del repositorio (hoy es público y sin licencia) antes de vender.
+Checklist de revisiones por etapa. Cada etapa se cierra recién cuando sus casillas están marcadas.
+
+### 9.0 Base (sin servidor)
+- [x] Base de datos cifrada, sesión atada al navegador, bloqueo por inactividad, cabeceras de seguridad
+- [x] Actualizaciones firmadas (Ed25519) con clave fuera de GitHub; releases en borrador hasta firmarlos
+- [x] Auditoría de dependencias (`pip-audit`) sin vulnerabilidades conocidas en `requirements-dev.txt`
+- [x] Escaneo de secretos y bloqueo de push con secretos; alertas y PRs de seguridad de Dependabot
+- [x] Protección de `master`: cambios solo vía PR, sin force-push ni borrado
+- [ ] 2FA en la cuenta de GitHub del mantenedor (y de cualquier colaborador)
+- [ ] Licencia del repositorio definida (hoy público y sin licencia) antes de vender
+- [ ] Firma de código de Windows del instalador (certificado pagado; elimina la advertencia de SmartScreen)
+
+### 9.1 Diseño, antes de escribir el servidor
+- [ ] Modelo de amenazas escrito (flujos de datos, quién ataca cada punto, qué pasa si falla cada pieza;
+      incluye lo que el E2EE NO protege, como un dispositivo con malware)
+- [ ] Revisión externa del diseño criptográfico: jerarquía de claves, separación `clave_auth`/`clave_cifrado`,
+      recuperación, alta de dispositivos nuevos
+
+### 9.2 Servidor y API (OWASP API Security Top 10, OWASP ASVS nivel 2)
+- [ ] Autorización por objeto (BOLA/IDOR): ningún usuario accede a blobs, dispositivos o suscripción de otro
+      cambiando un ID — pruebas automáticas por endpoint
+- [ ] Autenticación: freno a fuerza bruta y credential stuffing, 2FA sin atajos, rotación y revocación de
+      tokens, sin errores típicos de JWT (algoritmo `none`, confusión de claves)
+- [ ] Límites de consumo: tamaño máximo de blobs y peticiones por minuto por cuenta e IP
+- [ ] Webhooks de pagos: firma verificada, rechazo de reenvíos (marca de tiempo) e idempotencia
+- [ ] Secretos en un gestor de secretos con rotación; `gitleaks` en CI
+- [ ] Infraestructura: base de datos no expuesta a internet, IAM de mínimo privilegio, respaldos cifrados con
+      restauración probada
+- [ ] Logs sin datos financieros, tokens ni contraseñas; alertas ante patrones anómalos
+- [ ] SAST (Bandit/Semgrep) y SCA (pip-audit) en cada PR
+
+### 9.3 Conexión con bancos
+- [ ] Due diligence del agregador: certificaciones (ISO 27001 / SOC 2), retención de datos, subprocesadores,
+      responsabilidades contractuales ante brechas
+- [ ] Credenciales del agregador solo en el servidor, con alcance mínimo y rotación; nunca en el cliente
+- [ ] Consentimiento explícito, granular y revocable (Ley Fintec, art. 23); prueba de que el enlace bancario
+      de un usuario no se puede asociar a otra cuenta
+- [ ] Relay "sealed box" (§5): verificar que el texto en claro no queda en logs, volcados de errores ni
+      herramientas de monitoreo/APM (el punto de fuga más común)
+- [ ] Minimización: solo los permisos necesarios (movimientos); nunca pedir ni guardar la clave bancaria
+- [ ] Integridad de lo sincronizado: deduplicación y conciliación de saldo corrido para detectar datos
+      alterados o faltantes
+- [ ] Si se consume Finanzas Abiertas directo: certificación de seguridad de interfaces y pruebas funcionales
+      por terceros (NCG 514, Anexo 3), FAPI 2.0 / mTLS
+
+### 9.4 Apps cliente
+- [ ] Celular (OWASP MASVS): claves en Keychain/Keystore, pantalla oculta en el selector de apps, nada
+      sensible en logs ni en respaldos del teléfono, pinning de certificado
+- [ ] PWA: CSP estricta y revisión de XSS (en una PWA con E2EE, un XSS equivale a robar las claves), control
+      de la cadena de dependencias JavaScript (SRI, versiones fijadas)
+
+### 9.5 Antes de cobrar y de forma continua
+- [ ] Pentest externo (API, web, celular) y re-test tras corregir
+- [ ] Pagos con página alojada del procesador (Flow/Mercado Pago): los datos de tarjeta nunca pasan por el
+      servidor, alcance PCI DSS mínimo
+- [ ] Ley 21.719: evaluación de impacto, procedimiento de notificación de brechas, política de privacidad,
+      contratos con encargados
+- [ ] Plan de respuesta a incidentes (con simulacro) y canal de reporte de vulnerabilidades (`security.txt`)
+- [ ] Periódico: pentest anual, revisión trimestral de accesos, rotación de claves, simulacros de restauración
 
 ## 10. Cumplimiento legal (a validar con abogado)
 

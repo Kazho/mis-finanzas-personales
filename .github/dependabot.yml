@@ -1,0 +1,14 @@
+# Dependabot revisa una vez por semana si hay versiones nuevas de las dependencias y abre un PR por cada
+# una (las de seguridad llegan apenas se publica la alerta, sin esperar a la semana). Revisa cada PR antes
+# de integrarlo: en requirements-dev.txt las versiones estan fijadas a proposito para el build del .exe.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

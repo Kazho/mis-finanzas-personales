@@ -124,10 +124,63 @@ así que los movimientos pasan por el servidor antes de llegar al dispositivo. P
 - Honestidad obligatoria: durante esos milisegundos el servidor sí ve los datos. La promesa correcta
   para esta función es "no almacenamos tus movimientos en forma legible", no "nunca los vemos". Debe
   ser opcional y explicado al activarla; quien no la active mantiene E2EE total con carga de PDFs.
-- Finanzas Abiertas (vigencia julio 2027): consumir las APIs de los bancos directamente exige
-  inscribirse como PSBI ante la CMF (sociedad chilena, políticas de seguridad y datos, certificado de
-  seguridad de interfaces y pruebas funcionales por terceros — ver NCG 514/569). Recomendación: partir
-  con un agregador ya inscrito y evaluar la inscripción propia solo si el volumen lo justifica.
+- Finanzas Abiertas: consumir las APIs de los bancos directamente exige ser PSBI. Los requisitos
+  verificados contra la norma están en §5.1. Recomendación: partir con un agregador ya habilitado y evaluar
+  la inscripción propia solo si el volumen lo justifica.
+
+### 5.1 Lo que exige la CMF (Sistema de Finanzas Abiertas) — revisión de octubre de 2026
+
+**Qué se leyó y qué no.** El texto original de la NCG 514 (julio de 2024) se leyó completo, directo del PDF
+de la CMF. La modificación de junio de 2026 (NCG 569, que incorpora el Anexo Técnico N°3) se conoce solo por
+el comunicado de la CMF y resúmenes de estudios jurídicos: **hay que leer su texto y el Anexo 3 antes de
+construir**. Lo marcado "(por verificar)" viene de fuentes secundarias.
+
+**Calendario.** La norma entra en vigencia en **julio de 2027** (antes julio de 2026). Eso no significa que
+los movimientos estén disponibles ese día: los bancos tienen un plazo posterior para habilitar cada API.
+En el texto original, para personas naturales: 6 meses para términos y canales, **15 meses** para
+enrolamiento, posiciones, historial de transacciones y productos vigentes (18 meses las líneas de crédito).
+La modificación redefine esos plazos "entre 5 y 18 meses" (por verificar el detalle), y una fuente indica que
+la operación plena podría extenderse hasta 2030 mientras falte el Anexo 4 de costos. **Planificar con que las
+APIs de movimientos estarán disponibles entre fines de 2027 y 2029, no en julio de 2027.** Hay además un
+periodo piloto de 60 días y un *sandbox* de la CMF para probar antes.
+
+**Quién puede pedir los datos.** Solo participantes inscritos en el Registro de PSBI (Prestadores de Servicios
+Basados en Información) o habilitados en la nómina especial si ya son proveedores financieros inscritos.
+La inscripción es voluntaria pero **solo para personas jurídicas chilenas** (o extranjeras con agencia en Chile),
+presentada por su representante legal, con estatutos, socios principales (≥10%) y malla societaria. Una persona
+natural no puede inscribirse. Una app instalada por el usuario (escritorio o celular) **no consulta al banco
+directamente**: lo hace el conector, que es el PSBI, con el consentimiento del cliente. El usuario "dueño de sus
+datos" los obtiene por el conector, no por una API personal.
+
+**Autenticación.** El banco debe autenticar al PSBI con un certificado digital emitido por una autoridad de
+validación extendida y contrastar sus permisos con el Directorio de Participantes de la CMF; el cliente se
+autentica en su banco con autenticación reforzada (dos factores independientes). Estándares: OAuth 2.0 y OpenID
+Connect, API REST/JSON y OpenAPI 3.1; los perfiles FAPI 2.0 y mTLS se mencionan en fuentes secundarias (por
+verificar en el Anexo 3).
+
+**Consentimiento** (sección III.D de la norma). Debe ser expreso, específico (qué datos, a qué institución, por
+cuánto tiempo o con qué frecuencia y para qué finalidad), guardado en un soporte duradero, y sin interfaces
+que lo induzcan (nada premarcado, ni condicionar el servicio a ceder datos que no necesita). Se piden solo los
+datos estrictamente necesarios y se usan solo para la finalidad consentida. Obliga a ofrecer un **panel de
+control gratuito, remoto y autenticado** donde el cliente vea y revoque cada consentimiento (institución,
+finalidad, datos, fecha y hora, plazo, estado), con registro íntegro de accesos por **5 años**, historial de
+consentimientos de 5 años, **revocación en tiempo real** entre participantes y un aviso si el cliente no
+entra al panel en un año.
+
+**Qué datos y cada cuánto.** Historial de uso y transacciones: actualización diaria, disponible hasta 5
+minutos después, historia de 12 meses en el texto original (la modificación la llevaría a 24 meses, por
+verificar). Posiciones históricas: saldos mensuales.
+
+**Costos.** Los bancos no pueden cobrar a un PSBI, salvo reembolso de costos incrementales al superar umbrales
+de llamadas: para historial de transacciones, posiciones y productos, **150 llamadas mensuales por cliente y por
+PSBI**. El Anexo 4 (costos) estaba pendiente. Conviene diseñar la sincronización para consumir pocas llamadas
+(una consulta diaria por cliente ya es ~30 al mes).
+
+**Pregunta abierta para el abogado.** La norma exige a las instituciones guardar registro de las consultas del
+sistema por 5 años, incluida "la información que se transmite". La promesa de este plan es que el servidor no
+conserva los movimientos en claro (§5, *sealed box*). Hay que confirmar qué debe conservar el conector como
+PSBI (consentimientos y metadatos de cada consulta, seguro; el contenido de los movimientos, por aclarar) y
+si ese registro puede guardarse cifrado de modo que el servicio no pueda leerlo.
 
 ## 6. Celular
 
@@ -235,8 +288,55 @@ Checklist de revisiones por etapa. Cada etapa se cierra recién cuando sus casil
 | Fase | Entrega | Depende de |
 |---|---|---|
 | 0 ✅ | Bóveda cifrada local, código de recuperación, respaldos cifrados | — |
+| 0.5 ✅ | Contrato de ingesta (§12): toda fuente entrega un `LoteImportacion`, un solo camino de guardado, UUID global, fuente e id externo | Fase 0 |
 | 1 | Servicio de identidad: registro, verificación de email, inicio de sesión (§3.1–3.3), 2FA, dispositivos; sincronización de blob cifrado; bloqueo automático por inactividad; instalador firmado | Servidor mínimo (FastAPI) |
 | 2 | Suscripción: planes, pagos por webhook, licencia firmada con gracia offline y modo solo lectura (§3.4–3.5); licencia del repositorio; auditoría de seguridad externa | Fase 1 + procesador de pagos |
 | 3 | PWA para celular (consulta, registro manual, recurrentes, metas), desbloqueo con biometría | Fase 1; portar lógica de análisis |
-| 4 | Conexión con bancos vía agregador con "sealed box" (opcional por usuario) | Fase 3; contrato con agregador |
+| 4 | Conexión con bancos vía agregador con "sealed box" (opcional por usuario); el conector entrega lotes por el contrato de §12 | Fase 3; contrato con agregador; APIs de los bancos disponibles (§5.1) |
 | 5 | Sincronización por eventos; evaluar inscripción PSBI | Volumen de usuarios |
+
+## 12. Fuentes de datos y contrato de ingesta
+
+El producto es **local primero**: los datos del usuario viven cifrados en su dispositivo (escritorio o celular) y
+un servicio por suscripción (el conector) trae los movimientos desde los bancos. Para que pasar de archivos a
+APIs sea cambiar una fuente y no reescribir la app, toda entrada de datos pasa por un único contrato:
+
+```
+ Archivo PDF / Excel ──▶ parser ──▶ adaptador de archivo ─┐
+                                                          ├─▶ LoteImportacion ─▶ validar() ─▶ guardar_lote() ─▶ base local cifrada
+ Conector (API de bancos) ──────▶ adaptador de API ───────┘      (contrato)       (rechaza el        (una transacción,
+                                                                                    lote entero)       idempotente)
+```
+
+| Pieza | Archivo | Qué garantiza |
+|---|---|---|
+| Contrato | `src/fuentes/contrato.py` | Un solo formato de cuenta, movimiento y lote; `validar()` rechaza datos inconsistentes (montos negativos, cargo y abono a la vez, moneda o tipo desconocidos, `id_externo` repetido, sin forma de evitar duplicados) |
+| Adaptador de archivos | `src/fuentes/archivo.py` | Traduce lo que devuelven los parsers actuales al contrato; es el único lugar que lo sabe |
+| Guardado | `src/ingesta.py` | Todo el lote en una transacción; carga idempotente; reemplaza lo provisional; nunca pisa la categoría que eligió el usuario |
+| Interfaz del conector | `src/fuentes/conector.py` | Consentimientos (con los campos que exige la norma), `sincronizar()` que devuelve lotes, y un conector "no configurado" que falla con un mensaje claro |
+| Base de datos | `src/db.py` | `fuente`, `id_externo` y `uid` (UUID global) por movimiento y cuenta; índices únicos; el UUID lo asigna la base si falta |
+
+Decisiones que quedan escritas en el código:
+
+- **Idempotencia con id del banco.** Si el movimiento trae `id_externo`, se identifica por (cuenta, id): al
+  volver a recibirlo se **actualiza** lo que el banco pudo cambiar (un pendiente que pasa a contabilizado, un monto
+  corregido) en vez de duplicarlo. Sin id (archivos) se usa la huella de fecha, glosa y montos.
+- **Estado del movimiento.** `facturado` o `por_facturar` equivale a contabilizado o pendiente de una API.
+  Los pendientes son provisionales y los reemplaza la siguiente carga.
+- **UUID global.** Es lo que permite sincronizar PC y celular por eventos (§4, fase 2) sin que choquen los ids
+  autoincrementales de cada dispositivo.
+- **Sin secretos en el contrato.** El origen de un lote es una etiqueta; los tokens del conector van solo en la
+  bóveda cifrada.
+
+**Pendiente, en orden de importancia antes de automatizar:**
+
+1. **Montos como enteros.** Hoy son `float`. Para dinero conviene guardar la unidad mínima (pesos, centavos de
+   dólar) como entero, para que sumas y conciliaciones no arrastren errores de redondeo. Hay que migrarlo antes de
+   recibir miles de movimientos automáticos.
+2. **Conciliar archivo con API al migrar.** Quien ya cargó PDF tendrá los mismos movimientos llegando por API
+   con otra glosa. Hace falta una regla de equivalencia (misma cuenta, fecha, monto y estado), precedencia de la
+   API sobre el archivo y una lista de posibles duplicados para revisar, no un borrado automático.
+3. **Serialización del contrato.** Definir su esquema JSON (OpenAPI) para el servicio y para un cliente móvil que
+   no sea Python.
+4. **Identificadores de cuenta del banco** y su relación con el consentimiento que los habilitó.
+5. **Almacén de credenciales** del conector dentro de la bóveda: solo lectura, revocable, nunca en logs.

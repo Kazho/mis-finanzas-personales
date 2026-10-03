@@ -212,7 +212,7 @@ def listar_transacciones_sin_categoria() -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT t.id, t.fecha, t.descripcion, t.sucursal, t.monto_cargo, t.monto_abono, c.nombre AS cuenta
+            SELECT t.id, t.fecha, t.descripcion, t.sucursal, t.monto_cargo, t.monto_abono, c.nombre AS cuenta, c.moneda
             FROM transacciones t JOIN cuentas c ON c.id = t.cuenta_id
             WHERE t.categoria = ?
             ORDER BY t.fecha DESC
@@ -235,7 +235,7 @@ def listar_transacciones_por_mes(mes: str) -> list[dict]:
         rows = conn.execute(
             """
             SELECT t.id, t.fecha, t.descripcion, t.sucursal, t.monto_cargo, t.monto_abono, t.categoria,
-                   c.nombre AS cuenta
+                   c.nombre AS cuenta, c.moneda
             FROM transacciones t JOIN cuentas c ON c.id = t.cuenta_id
             WHERE substr(t.fecha, 1, 7) = ?
             ORDER BY t.fecha DESC

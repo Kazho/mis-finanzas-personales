@@ -54,9 +54,13 @@ def _seccion_tarjetas(cuentas: list[dict]):
     c_ = colores()
     hoy = datetime.date.today()
     with tarjeta("Tarjetas de credito"):
-        texto_muted("Datos del ultimo estado de cuenta cargado de cada tarjeta.")
+        texto_muted(
+            "Lo facturado es lo que ya viene en un estado de cuenta (se descuentan los pagos hechos despues del corte); "
+            "lo por facturar son las compras posteriores al corte, que entran en el proximo."
+        )
         for c in tarjetas:
             tc, moneda = c["tc"], c.get("moneda") or "CLP"
+            pendiente = tc.get("facturado_pendiente")
             with ui.column().classes("w-full gap-1"):
                 ui.label(f"{c.get('banco') or ''} — {nombre_visible(c)}".strip(" —")).classes("font-bold")
                 items = []
@@ -67,19 +71,28 @@ def _seccion_tarjetas(cuentas: list[dict]):
                          f"{uso:.0f}% de {monto(tc['cupo_total'], moneda)}", None),
                         ("Cupo disponible", monto(tc["cupo_disponible"], moneda), c_["success"], "\U0001F7E2"),
                     ]
-                items += [
-                    ("Facturado a pagar", monto(tc["monto_facturado"], moneda), c_["accent_orange"], "\U0001F9FE",
-                     f"Minimo {monto(tc['pago_minimo'], moneda)}" if tc.get("pago_minimo") is not None else None, None),
-                    ("Vence", _fecha(tc.get("fecha_vencimiento")), c_["accent_blue"], "\U0001F4C5"),
-                ]
+                if tc.get("monto_facturado") is not None:
+                    detalle = f"Facturado {monto(tc['monto_facturado'], moneda)}"
+                    if tc.get("pagos_posteriores"):
+                        detalle += f" · pagado {monto(tc['pagos_posteriores'], moneda)}"
+                    elif tc.get("pago_minimo") is not None:
+                        detalle += f" · minimo {monto(tc['pago_minimo'], moneda)}"
+                    items.append(("Facturado pendiente", monto(pendiente, moneda), c_["accent_orange"], "\U0001F9FE", detalle, None))
+                if tc.get("n_provisionales"):
+                    items.append(("Por facturar", monto(tc["por_facturar"], moneda), c_["accent_purple"], "\U0001F551",
+                                  "compras despues del corte", None))
+                if pendiente:
+                    items.append(("Vence", _fecha(tc.get("fecha_vencimiento")), c_["accent_blue"], "\U0001F4C5"))
+                elif pendiente == 0:
+                    items.append(("Vencimiento", "Al dia", c_["success"], "\u2705"))
                 kpi_cards(items)
-                if tc.get("fecha_vencimiento"):
+                if pendiente and tc.get("fecha_vencimiento"):
                     dias = (datetime.date.fromisoformat(tc["fecha_vencimiento"]) - hoy).days
                     if 0 <= dias <= DIAS_AVISO_VENCIMIENTO:
-                        banner("warning", f"**{nombre_visible(c)}** vence en **{dias} dia(s)** ({_fecha(tc['fecha_vencimiento'])}).")
+                        banner("warning", f"**{nombre_visible(c)}** vence en **{dias} dia(s)** ({_fecha(tc['fecha_vencimiento'])}): quedan **{monto(pendiente, moneda)}** por pagar.")
                     elif dias < 0:
-                        banner("info", f"El estado de cuenta de **{nombre_visible(c)}** ya vencio ({_fecha(tc['fecha_vencimiento'])}). "
-                                       "Carga el del mes siguiente para actualizar estos datos.")
+                        banner("warning", f"**{nombre_visible(c)}**: el vencimiento fue el {_fecha(tc['fecha_vencimiento'])} y aun figuran "
+                                          f"**{monto(pendiente, moneda)}** sin pagar. Si ya pagaste, carga los movimientos por facturar para registrarlo.")
 
 
 @ui.page("/panorama")

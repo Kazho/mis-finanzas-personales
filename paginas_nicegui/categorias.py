@@ -32,7 +32,7 @@ from src.categorias import (
     obtener_categoria_buckets,
     recategorizar_todas,
 )
-from src.formato import clp
+from src.formato import monto
 from src.ui_nicegui.components import banner, tarjeta, texto_muted
 from src.ui_nicegui.editable_table import editable_table
 from src.ui_nicegui.layout import layout
@@ -73,7 +73,7 @@ def _seccion_sin_categorizar():
     filas = [
         {
             "id": t["id"], "fecha": t["fecha"], "descripcion": t["descripcion"], "sucursal": t["sucursal"] or "",
-            "cuenta": t["cuenta"], "monto_cargo": clp(t["monto_cargo"]), "monto_abono": clp(t["monto_abono"]),
+            "cuenta": t["cuenta"], "monto_cargo": monto(t["monto_cargo"], t["moneda"]), "monto_abono": monto(t["monto_abono"], t["moneda"]),
             "categoria": SIN_CATEGORIA,
         }
         for t in sin_categoria
@@ -118,7 +118,7 @@ def _seccion_ajustar_mes():
             filas = [
                 {
                     "id": t["id"], "fecha": t["fecha"], "descripcion": t["descripcion"], "sucursal": t["sucursal"] or "",
-                    "cuenta": t["cuenta"], "monto_cargo": clp(t["monto_cargo"]), "monto_abono": clp(t["monto_abono"]),
+                    "cuenta": t["cuenta"], "monto_cargo": monto(t["monto_cargo"], t["moneda"]), "monto_abono": monto(t["monto_abono"], t["moneda"]),
                     "categoria": t["categoria"],
                 }
                 for t in trans_mes

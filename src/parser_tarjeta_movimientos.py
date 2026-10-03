@@ -33,6 +33,11 @@ TOLERANCIA_CUADRATURA = {"CLP": 1.0, "USD": 0.015}
 
 GLOSAS_PAGO = ("MONTO CANCELADO", "PAGO DOLAR TEF", "PAGO PESOS TEF")
 
+# Un Excel de movimientos real tiene unas decenas de filas. Un archivo que declara una hoja gigante se rechaza antes de
+# leer ninguna celda (`xlrd` carga toda la hoja en memoria).
+MAX_FILAS_XLS = 5000
+MAX_COLUMNAS_XLS = 64
+
 
 def _norm(texto) -> str:
     """Minusculas, sin tildes y con espacios simples, para reconocer encabezados sin depender de la codificacion."""
@@ -103,8 +108,20 @@ def _leer_xls(contenido: bytes) -> list[list]:
     except ImportError as e:
         raise RuntimeError("Falta la libreria xlrd para leer archivos .xls: instalala con `py -m pip install xlrd`.") from e
 
-    hoja = xlrd.open_workbook(file_contents=contenido).sheet_by_index(0)
-    return [[hoja.cell_value(r, c) for c in range(hoja.ncols)] for r in range(hoja.nrows)]
+    try:
+        # on_demand: solo se carga la hoja que se pide, no todas las que declare el archivo
+        hoja = xlrd.open_workbook(file_contents=contenido, on_demand=True).sheet_by_index(0)
+        _validar_dimensiones(hoja.nrows, hoja.ncols)
+        return [[hoja.cell_value(r, c) for c in range(hoja.ncols)] for r in range(hoja.nrows)]
+    except ValueError:
+        raise
+    except Exception as e:  # xlrd lanza IndexError, AssertionError, struct.error... ante archivos danados
+        raise ValueError("El archivo Excel esta danado o no es un .xls valido.") from e
+
+
+def _validar_dimensiones(filas: int, columnas: int) -> None:
+    if filas > MAX_FILAS_XLS or columnas > MAX_COLUMNAS_XLS:
+        raise ValueError("El Excel declara una hoja demasiado grande para ser un movimiento de tarjeta; se rechazo por seguridad.")
 
 
 def es_tarjeta_xls(contenido: bytes) -> bool:

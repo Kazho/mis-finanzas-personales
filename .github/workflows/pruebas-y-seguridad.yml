@@ -1,0 +1,51 @@
+name: Pruebas y seguridad
+
+# Corre en cada PR y en cada push a master:
+#   - las pruebas unitarias (incluidas las de carga de archivos hostiles: bombas de descompresion, formatos falsos...)
+#   - analisis estatico del codigo (bandit): falla con hallazgos de severidad media o alta
+#   - auditoria de dependencias (pip-audit) contra la base de vulnerabilidades conocidas
+# Dependabot (ver dependabot.yml) cubre las versiones nuevas; esto cubre el codigo propio y detecta una dependencia
+# vulnerable aunque nadie haya abierto un PR de actualizacion.
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  pruebas:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14.4"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Pruebas unitarias
+        run: python -m unittest discover -s tests -t . -v
+
+  seguridad:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14.4"
+
+      - name: Instalar herramientas
+        run: pip install bandit pip-audit
+
+      # Los avisos de severidad baja son falsos positivos conocidos (una cadena vacia llamada "password" en el estado
+      # de la pantalla de carga, y el lanzador del instalador ya firmado); medio y alto si deben fallar.
+      - name: Analisis estatico (bandit)
+        run: bandit -q -r src paginas_nicegui launcher.py --severity-level medium
+
+      - name: Auditoria de dependencias (pip-audit)
+        run: pip-audit -r requirements-dev.txt

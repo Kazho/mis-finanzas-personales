@@ -1,12 +1,11 @@
 """Cargar Informe de Deudas CMF -- version NiceGUI de vistas/2_Cargar_Deuda_CMF.py (Streamlit)."""
-import io
-
 import pandas as pd
-from nicegui import ui
+from nicegui import run, ui
 
 from src.db import get_conn
 from src.formato import clp
-from src.parser_cmf import parse_cmf
+from src.lectura_aislada import LecturaFallida, leer_informe_cmf_aislado
+from src.seguridad_archivos import MAX_BYTES, ArchivoNoPermitido, nombre_seguro
 from src.ui_nicegui.components import banner, kpi_cards, tabla, texto_muted
 from src.ui_nicegui.layout import layout
 from src.ui_nicegui.theme import colores
@@ -33,13 +32,16 @@ def pagina_cargar_deuda_cmf():
 
         async def _al_subir(e):
             contenido = await e.file.read()
-            nombre = e.file.name
+            nombre = nombre_seguro(e.file.name)
             resultado_col.clear()
             with resultado_col:
                 try:
-                    r = parse_cmf(io.BytesIO(contenido))
-                except Exception as ex:
-                    banner("error", f"No se pudo leer el PDF. Detalle: {ex}")
+                    r = await run.io_bound(leer_informe_cmf_aislado, nombre, contenido)
+                except (ArchivoNoPermitido, LecturaFallida) as ex:
+                    banner("error", str(ex))
+                    return
+                except Exception:  # noqa: BLE001 - sin detalles internos al usuario
+                    banner("error", "No se pudo leer el PDF.")
                     return
 
                 if r["deuda_total"] is None or r["fecha_actualizacion"] is None:
@@ -123,4 +125,4 @@ def pagina_cargar_deuda_cmf():
 
                 ui.button("Guardar en la base de datos", on_click=_guardar).props("color=primary")
 
-        ui.upload(on_upload=_al_subir, auto_upload=True, label="Selecciona el PDF del informe de deudas").props('accept=".pdf"').classes("w-full")
+        ui.upload(on_upload=_al_subir, auto_upload=True, max_file_size=MAX_BYTES, label="Selecciona el PDF del informe de deudas").props('accept=".pdf"').classes("w-full")

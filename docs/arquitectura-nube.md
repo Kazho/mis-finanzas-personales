@@ -300,6 +300,24 @@ Checklist de revisiones por etapa. Cada etapa se cierra recién cuando sus casil
 - [x] Auditoría de dependencias (`pip-audit`) sin vulnerabilidades conocidas en `requirements-dev.txt`
 - [x] Escaneo de secretos y bloqueo de push con secretos; alertas y PRs de seguridad de Dependabot
 - [x] Protección de `master`: cambios solo vía PR, sin force-push ni borrado
+- [x] Carga de archivos endurecida (octubre de 2026): tamaño máximo de 25 MB, tipo verificado por la firma real del
+      archivo y no por la extensión, nombre saneado, lectura en un **proceso aparte con tiempo límite de 30 s**, y
+      datos validados antes de guardar (montos finitos y acotados, fechas razonables, textos sin caracteres de
+      control). Motivo medido: un PDF válido de 7 KB que se expande a 2 MB tarda ~30 s y usa ~490 MB al leerse, y el
+      costo crece de forma lineal; ahora se rechaza al instante o se corta a los 30 s sin congelar la app
+      (`src/seguridad_archivos.py`, `src/lectura_aislada.py`)
+- [x] Pruebas de seguridad automáticas de esa carga: archivos disfrazados, bombas de descompresión (también las que
+      evaden el filtro previo), Excel y PDF dañados, tiempo límite, datos absurdos (`tests/test_seguridad_archivos.py`);
+      fuzzing por mutación de 480 archivos corruptos sin cuelgues ni consumo anormal de memoria
+- [x] Análisis estático (bandit) y auditoría de dependencias directas y transitivas (pip-audit) sin hallazgos de
+      severidad media o alta ni vulnerabilidades conocidas; se ejecutan en `.github/workflows/pruebas-y-seguridad.yml`
+      (el workflow se escribió pero aún no se ha visto correr en GitHub)
+- [ ] Límite de **memoria** del proceso lector (hoy solo hay tiempo límite; en 30 s una bomba llega a ~0,5 GB)
+- [ ] `xlrd` (lee los `.xls`) no tiene mantenimiento activo y falló de formas internas ante archivos corruptos (hoy se
+      convierte en un error claro y corre aislado); evaluar reemplazarlo o seguir fuzzeándolo
+- [ ] Probar el `.exe` empaquetado con `--lector-aislado` (el proceso lector se lanza con el propio ejecutable; no se
+      ha construido el instalador con este cambio) y medir el costo de arranque de cada lectura
+- [ ] Fuzzing periódico (hoy se hizo una vez, a mano) y revisión de la ruta de la actualización automática
 - [ ] 2FA en la cuenta de GitHub del mantenedor (y de cualquier colaborador)
 - [ ] Licencia del repositorio definida (hoy público y sin licencia) antes de vender
 - [ ] Firma de código de Windows del instalador (certificado pagado; elimina la advertencia de SmartScreen)

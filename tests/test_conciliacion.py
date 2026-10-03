@@ -75,6 +75,31 @@ class ConciliarTraspasosTest(unittest.TestCase):
         df["categoria_manual"] = [1, 1, 0]
         self.assertEqual(conciliar_traspasos(df).attrs["n_conciliados"], 0)
 
+    def test_pago_de_tarjeta_sin_su_cargo_no_es_ingreso(self):
+        df = _df([(1, "2026-10-01", "PAGO TARJETA DE CREDITO (PAGO PESOS TEF)", 0, 156913, "Pago tarjeta de credito", "TC", "tarjeta", "CLP")])
+        r = conciliar_traspasos(df)
+        self.assertEqual(_cat(r, 1), CATEGORIA_TRASPASO)
+        self.assertEqual(r.attrs["n_conciliados"], 0)
+
+    def test_pago_de_tarjeta_usd_desde_cuenta_en_pesos(self):
+        df = _df([
+            (1, "2026-10-01", "PAGO TARJETA DE CREDITO (PAGO DOLAR TEF)", 0, 25.63, "x", "TC USD", "tarjeta", "USD"),
+            (2, "2026-10-01", "PAGO TC INTERNACIONAL", 25_100, 0, "Pago tarjeta de credito", "CC", "corriente", "CLP"),
+        ])
+        self.assertEqual(conciliar_traspasos(df).attrs["n_conciliados"], 0)
+        r = conciliar_traspasos(df, 980.0)
+        self.assertEqual(r.attrs["n_conciliados"], 1)
+        self.assertEqual(_cat(r, 2), CATEGORIA_TRASPASO)
+
+    def test_cambio_fuera_de_margen_no_concilia(self):
+        df = _df([
+            (1, "2026-10-01", "PAGO TARJETA DE CREDITO (PAGO DOLAR TEF)", 0, 25.63, "x", "TC USD", "tarjeta", "USD"),
+            (2, "2026-10-01", "OTRO CARGO", 40_000, 0, "x", "CC", "corriente", "CLP"),
+        ])
+        r = conciliar_traspasos(df, 980.0)
+        self.assertEqual(r.attrs["n_conciliados"], 0)
+        self.assertEqual(_cat(r, 2), "x")
+
     def test_dataframe_vacio(self):
         self.assertTrue(conciliar_traspasos(_df([])).empty)
 

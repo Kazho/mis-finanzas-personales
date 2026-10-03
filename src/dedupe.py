@@ -27,3 +27,19 @@ def hash_transaccion(
         for x in (numero_cuenta, fecha, descripcion.strip().upper(), monto_cargo, monto_abono, saldo)
     )
     return hashlib.sha256(base.encode("utf-8")).hexdigest()
+
+
+def asignar_hashes(transacciones: list[dict], clave_cuenta: str) -> None:
+    """Pone `hash_dedupe` a cada movimiento de una cuenta SIN saldo por fila (tarjetas de credito).
+
+    Sin saldo, dos compras identicas el mismo dia (mismo comercio y monto) darian el mismo hash y la
+    segunda se descartaria como duplicada: se distinguen por orden de aparicion. `clave_cuenta` debe
+    incluir la moneda si la misma tarjeta tiene cuentas en CLP y USD."""
+    vistos: dict[tuple, int] = {}
+    for t in transacciones:
+        clave = (t["fecha"], t["descripcion"], t["monto_cargo"], t["monto_abono"])
+        vistos[clave] = vistos.get(clave, 0) + 1
+        sufijo = f" #{vistos[clave]}" if vistos[clave] > 1 else ""
+        t["hash_dedupe"] = hash_transaccion(
+            clave_cuenta, t["fecha"], t["descripcion"] + sufijo, t["monto_cargo"], t["monto_abono"], None
+        )

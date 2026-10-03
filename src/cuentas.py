@@ -50,11 +50,39 @@ def listar_cuentas() -> list[dict]:
             c["n_movimientos"] = resumen["n"]
             c["ultimo_movimiento"] = resumen["ultimo"]
 
-            estado = conn.execute(
-                "SELECT * FROM tc_estados WHERE cuenta_id = ? ORDER BY periodo_hasta DESC LIMIT 1", (c["id"],)
+            estados = conn.execute(
+                "SELECT * FROM tc_estados WHERE cuenta_id = ? ORDER BY periodo_hasta DESC", (c["id"],)
+            ).fetchall()
+            provisionales = conn.execute(
+                "SELECT COUNT(*) AS n, COALESCE(SUM(monto_cargo), 0) AS compras, COALESCE(SUM(monto_abono), 0) AS pagos "
+                "FROM transacciones WHERE cuenta_id = ? AND estado = 'por_facturar'",
+                (c["id"],),
             ).fetchone()
-            c["tc"] = dict(estado) if estado else None
+            c["tc"] = _resumen_tarjeta([dict(e) for e in estados], dict(provisionales))
     return cuentas
+
+
+def _resumen_tarjeta(estados: list[dict], provisionales: dict) -> dict | None:
+    """Une los datos de la tarjeta que vienen de documentos distintos: el estado facturado trae monto a pagar y
+    vencimiento, y la consulta de movimientos por facturar trae el cupo. De cada dato vale el mas reciente que
+    exista (`estados` viene del mas nuevo al mas viejo).
+
+    Tambien calcula lo que sigue pendiente: del monto facturado se descuentan los pagos hechos DESPUES del
+    corte (aparecen como abonos por facturar), y las compras por facturar son lo que viene en el proximo corte."""
+    if not estados:
+        return None
+    campos = ("monto_facturado", "pago_minimo", "fecha_vencimiento", "cupo_total", "cupo_utilizado", "cupo_disponible")
+    tc = {"periodo_hasta": estados[0]["periodo_hasta"]}
+    for campo in campos:
+        tc[campo] = next((e[campo] for e in estados if e[campo] is not None), None)
+    tc["por_facturar"] = round(provisionales["compras"], 2)
+    tc["pagos_posteriores"] = round(provisionales["pagos"], 2)
+    tc["n_provisionales"] = provisionales["n"]
+    if tc["monto_facturado"] is not None:
+        tc["facturado_pendiente"] = max(0.0, round(tc["monto_facturado"] - provisionales["pagos"], 2))
+    else:
+        tc["facturado_pendiente"] = None
+    return tc
 
 
 def actualizar_cuenta(cuenta_id: int, *, alias: str, banco: str, tipo: str, moneda: str, archivada: bool):
@@ -141,7 +169,8 @@ def preparar_transacciones(df, dolar: float | None):
     """Deja el DataFrame de movimientos listo para el analisis de gastos del Dashboard.
 
     1. Concilia pagos de tarjeta y traspasos entre cuentas propias (ver src/conciliacion.py) ANTES de
-       convertir, cuando los montos todavia estan en su moneda original.
+       convertir, cuando los montos todavia estan en su moneda original (el dolar sirve para conciliar el pago
+       de una tarjeta en USD hecho desde una cuenta en pesos).
     2. Convierte los movimientos en USD a pesos con el dolar observado (aproximado); sin dolar se dejan
        fuera, porque sumar dolares como si fueran pesos falsearia todos los totales.
     3. Anula `saldo` en tarjetas, cuentas en USD y cuentas archivadas: el Dashboard suma el ultimo saldo
@@ -151,7 +180,7 @@ def preparar_transacciones(df, dolar: float | None):
     `n_conciliados`, `n_usd_convertidos` y `n_usd_omitidos` para avisar al usuario."""
     from src.conciliacion import conciliar_traspasos
 
-    df = conciliar_traspasos(df)
+    df = conciliar_traspasos(df, dolar)
     n_conciliados = df.attrs.get("n_conciliados", 0)
     n_usd_convertidos = n_usd_omitidos = 0
     if not df.empty:

@@ -20,7 +20,7 @@ from datetime import date, datetime
 
 import pdfplumber
 
-from src.dedupe import hash_transaccion
+from src.dedupe import asignar_hashes
 
 FECHA = r"\d{2}/\d{2}/\d{4}"
 
@@ -124,16 +124,7 @@ def parse_tarjeta_credito(path, password: str | None = None) -> dict:
 
     transacciones.sort(key=lambda t: t["fecha"])
 
-    # Sin saldo por fila, dos compras identicas el mismo dia (mismo comercio y monto) darian el mismo
-    # hash y la segunda se descartaria como duplicada: se distinguen por orden de aparicion.
-    vistos = {}
-    for t in transacciones:
-        clave = (t["fecha"], t["descripcion"], t["monto_cargo"], t["monto_abono"])
-        vistos[clave] = vistos.get(clave, 0) + 1
-        sufijo = f" #{vistos[clave]}" if vistos[clave] > 1 else ""
-        t["hash_dedupe"] = hash_transaccion(
-            numero_cuenta, t["fecha"], t["descripcion"] + sufijo, t["monto_cargo"], t["monto_abono"], None
-        )
+    asignar_hashes(transacciones, numero_cuenta)
 
     return {
         "banco": banco,
@@ -149,6 +140,8 @@ def parse_tarjeta_credito(path, password: str | None = None) -> dict:
         "saldo_disponible_hora": None,
         "cuadratura_ok": cuadratura_ok,
         "es_tarjeta_credito": True,
+        "etiqueta_saldo": "Monto facturado a pagar",
+        "estado": "facturado",
         "tipo_cuenta": "tarjeta",
         "moneda": "CLP",
         "estado_tc": {

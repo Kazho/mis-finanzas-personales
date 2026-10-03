@@ -14,16 +14,23 @@ from pdfminer.pdfdocument import PDFPasswordIncorrect
 from pdfplumber.utils.exceptions import PdfminerException
 
 from src.categorias import categorizar, listar_categorias
-from src.db import get_conn, get_or_create_cuenta, guardar_estado_tc, guardar_saldo_snapshot
-from src.formato import clp
+from src.db import buscar_banco_por_numero
+from src.fuentes.archivo import lote_desde_resultado
+from src.ingesta import guardar_lote
+from src.formato import monto
 from src.parser_bancoestado import es_bancoestado_cuentarut, parse_cartola_bancoestado
 from src.parser_cartola import parse_cartola
 from src.parser_movimientos import es_movimientos, parse_movimientos
 from src.parser_tarjeta_credito import es_tarjeta_credito, parse_tarjeta_credito
+from src.parser_tarjeta_movimientos import (
+    es_tarjeta_no_facturada, es_tarjeta_xls, parse_tarjeta_facturado_xls, parse_tarjeta_no_facturada,
+)
 from src.ui_nicegui.components import banner, kpi_cards, texto_muted
 from src.ui_nicegui.editable_table import editable_table
 from src.ui_nicegui.layout import layout
 from src.ui_nicegui.theme import colores
+
+BANCOS = ["Banco de Chile", "BancoEstado", "Santander", "BCI", "Scotiabank", "Itau", "Banco Falabella", "Banco Security"]
 
 
 @ui.page("/cargar-cartola")
@@ -34,24 +41,36 @@ def pagina_cargar_cartola():
         texto_muted(
             "Soporta la cartola oficial mensual de Banco de Chile ('Estado de Cuenta'), el PDF de "
             "'Movimientos al [fecha]' que puedes descargar en cualquier momento desde tu banca en linea de "
-            "Banco de Chile, la cartola CuentaRUT de BancoEstado y el estado de cuenta de tarjeta de credito Santander. Puedes cargar varios sin miedo a "
+            "Banco de Chile, la cartola CuentaRUT de BancoEstado y el estado de cuenta de tarjeta de credito Santander. "
+            "Para tarjetas Visa Infinite y similares: el Excel (.xls) de movimientos facturados y el PDF de "
+            "'Saldo y Movimientos No Facturados', en pesos y en dolares. Puedes cargar varios sin miedo a "
             "duplicar: si un movimiento ya lo cargaste, no se repite al cargar otro documento que lo "
             "incluya de nuevo."
         )
 
         estado = {"contenido": None, "nombre": None, "password": ""}
 
-        @ui.refreshable
-        def _procesar():
-            if estado["contenido"] is None:
-                return
+        def _leer_documento():
+            """Detecta el tipo de documento y lo parsea. Devuelve (resultado, tipo_documento, clase) o None si
+            ya mostro un mensaje (contraseña pendiente, error de lectura o formato no reconocido)."""
+            contenido = estado["contenido"]
+            if estado["nombre"].lower().endswith(".xls"):
+                try:
+                    if not es_tarjeta_xls(contenido):
+                        banner("error", "No se reconocio este Excel. Por ahora se soporta el Excel de movimientos facturados de tarjeta de credito.")
+                        return None
+                    return parse_tarjeta_facturado_xls(contenido), "Tarjeta de credito (facturado)", "tarjeta"
+                except Exception as e:
+                    banner("error", f"No se pudo leer el Excel. Detalle: {e}")
+                    return None
+
             try:
-                with pdfplumber.open(io.BytesIO(estado["contenido"]), password=estado["password"]) as pdf:
+                with pdfplumber.open(io.BytesIO(contenido), password=estado["password"]) as pdf:
                     texto_pagina1 = pdf.pages[0].extract_text() or ""
             except PdfminerException as e:
                 if not isinstance(e.args[0] if e.args else None, PDFPasswordIncorrect):
                     banner("error", f"No se pudo leer el PDF. Detalle: {e}")
-                    return
+                    return None
                 banner("warning", "Este PDF esta protegido con contraseña (comun en las cartolas CuentaRUT de BancoEstado y en los estados de cuenta de tarjeta).")
                 pw_input = ui.input("Contraseña del PDF", password=True, password_toggle_button=True)
 
@@ -60,52 +79,81 @@ def pagina_cargar_cartola():
                     _procesar.refresh()
 
                 ui.button("Desbloquear", on_click=_desbloquear).props("color=primary")
-                return
+                return None
 
-            es_tipo_bancoestado = es_bancoestado_cuentarut(texto_pagina1)
-            es_tipo_tarjeta = es_tarjeta_credito(texto_pagina1)
-            es_tipo_movimientos = es_movimientos(texto_pagina1) if not (es_tipo_bancoestado or es_tipo_tarjeta) else False
-
+            archivo, pw = io.BytesIO(contenido), estado["password"]
             try:
-                if es_tipo_tarjeta:
-                    resultado = parse_tarjeta_credito(io.BytesIO(estado["contenido"]), password=estado["password"])
-                elif es_tipo_bancoestado:
-                    resultado = parse_cartola_bancoestado(io.BytesIO(estado["contenido"]), password=estado["password"])
-                elif es_tipo_movimientos:
-                    resultado = parse_movimientos(io.BytesIO(estado["contenido"]))
-                else:
-                    resultado = parse_cartola(io.BytesIO(estado["contenido"]))
+                if es_tarjeta_credito(texto_pagina1):
+                    return parse_tarjeta_credito(archivo, password=pw), "Estado de cuenta tarjeta de credito", "tarjeta"
+                if es_tarjeta_no_facturada(texto_pagina1):
+                    return parse_tarjeta_no_facturada(archivo, password=pw), "Tarjeta de credito (por facturar)", "tarjeta"
+                if es_bancoestado_cuentarut(texto_pagina1):
+                    return parse_cartola_bancoestado(archivo, password=pw), "Cartola CuentaRUT", "cuenta"
+                if es_movimientos(texto_pagina1):
+                    return parse_movimientos(archivo), "Movimientos al dia", "movimientos"
+                return parse_cartola(archivo), "Cartola oficial", "cuenta"
             except Exception as e:
                 banner("error", f"No se pudo leer el PDF. Detalle: {e}")
+                return None
+
+        @ui.refreshable
+        def _procesar():
+            if estado["contenido"] is None:
                 return
+            leido = _leer_documento()
+            if leido is None:
+                return
+            resultado, tipo_documento, clase = leido
+            es_tarjeta = clase == "tarjeta"
+            es_tipo_movimientos = clase == "movimientos"
+            moneda = resultado.get("moneda", "CLP")
+            por_facturar = resultado.get("estado") == "por_facturar"
 
             if not resultado["numero_cuenta"] or not resultado["transacciones"]:
-                banner("error", "No se reconocio la estructura de este PDF como un documento soportado.")
+                banner("error", "No se reconocio la estructura de este documento como uno soportado.")
                 return
 
-            nombre_cuenta = f"{resultado['banco']} - {resultado['numero_cuenta']}"
-            tipo_documento = (
-                "Movimientos al dia" if es_tipo_movimientos
-                else "Estado de cuenta tarjeta de credito" if es_tipo_tarjeta
-                else "Cartola CuentaRUT" if es_tipo_bancoestado
-                else "Cartola oficial"
-            )
-            periodo = (
-                str(resultado["periodo_hasta"]) if es_tipo_movimientos
-                else f"{resultado['periodo_desde']} a {resultado['periodo_hasta']}"
-            )
+            # Algunos documentos (tarjetas) no dicen de que banco son: se reutiliza el de una cuenta ya creada
+            # con ese numero de tarjeta, y si es la primera vez se le pregunta al usuario.
+            banco_conocido = resultado["banco"] or buscar_banco_por_numero(resultado["numero_cuenta"])
+            selector_banco = None
+            if not banco_conocido:
+                banner("info", f"Este documento no indica de que banco es la tarjeta {resultado['numero_cuenta']}. Elige el banco para continuar; la proxima vez se recuerda.")
+                selector_banco = ui.select(
+                    BANCOS, label="Banco", with_input=True, new_value_mode="add-unique",
+                ).classes("w-72")
 
+            sufijo = resultado.get("sufijo_cuenta", "")
+
+            def _nombre_cuenta():
+                banco = banco_conocido or (selector_banco.value if selector_banco else None) or "Banco sin indicar"
+                return f"{banco} - {resultado['numero_cuenta']}{sufijo}"
+
+            if por_facturar or es_tipo_movimientos:
+                periodo = f"Al {resultado['periodo_hasta']}"
+            elif resultado["periodo_desde"]:
+                periodo = f"{resultado['periodo_desde']} a {resultado['periodo_hasta']}"
+            else:
+                periodo = f"Corte {resultado['periodo_hasta']}"
+
+            nombre_visible_cuenta = _nombre_cuenta() if banco_conocido else f"Tarjeta {resultado['numero_cuenta']}{sufijo}"
             kpi_cards([
-                ("Cuenta", nombre_cuenta, c["accent_blue"], "\U0001F3E6"),
+                ("Cuenta", nombre_visible_cuenta, c["accent_blue"], "\U0001F3E6"),
                 ("Tipo de documento", tipo_documento, c["accent_blue"], "\U0001F4C4"),
-                ("Periodo" if not es_tipo_movimientos else "Movimientos al", periodo, c["accent_blue"], "\U0001F4C5"),
-                ("Monto facturado a pagar" if es_tipo_tarjeta else "Saldo final", clp(resultado["saldo_final"]), c["accent_blue"], "\U0001F4B0"),
+                ("Fecha" if por_facturar or es_tipo_movimientos else "Periodo", periodo, c["accent_blue"], "\U0001F4C5"),
+                (resultado.get("etiqueta_saldo", "Saldo final"), monto(resultado["saldo_final"], moneda), c["accent_blue"], "\U0001F4B0"),
             ])
 
-            if resultado["cuadratura_ok"] is None:
-                banner("info", "Este documento no trae saldo inicial explicito, asi que no se puede verificar la cuadratura — cada fila usa el saldo que trae el propio PDF.")
-            elif resultado["cuadratura_ok"] and es_tipo_tarjeta:
-                banner("success", "Cuadratura correcta: la suma de compras y cuotas coincide con el total de operaciones del estado de cuenta.")
+            if por_facturar:
+                banner(
+                    "info",
+                    "Estos movimientos son **provisionales**: ocurrieron despues del ultimo corte y todavia no estan en un "
+                    "estado de cuenta. Cuando cargues el estado de cuenta facturado siguiente se reemplazan solos, sin duplicarse.",
+                )
+            elif resultado["cuadratura_ok"] is None:
+                banner("info", "Este documento no trae saldo inicial explicito, asi que no se puede verificar la cuadratura — cada fila usa el saldo que trae el propio documento.")
+            elif resultado["cuadratura_ok"] and es_tarjeta:
+                banner("success", "Cuadratura correcta: la suma de compras y cuotas coincide con el total facturado del documento.")
             elif resultado["cuadratura_ok"]:
                 banner("success", "Cuadratura correcta: saldo inicial + movimientos = saldo final.")
             else:
@@ -120,48 +168,26 @@ def pagina_cargar_cartola():
             filas_editor = [
                 {
                     "fecha": str(row["fecha"]), "descripcion": row["descripcion"], "sucursal": row["sucursal"] or "",
-                    "monto_cargo": clp(row["monto_cargo"]), "monto_abono": clp(row["monto_abono"]), "saldo": clp(row["saldo"]),
-                    "categoria": row["categoria"],
+                    "monto_cargo": monto(row["monto_cargo"], moneda), "monto_abono": monto(row["monto_abono"], moneda),
+                    "saldo": monto(row["saldo"], moneda), "categoria": row["categoria"],
                 }
                 for _, row in df.iterrows()
             ]
 
             def _guardar(_originales, editados):
-                cuenta_id = get_or_create_cuenta(
-                    nombre_cuenta, banco=resultado["banco"], numero_cuenta=resultado["numero_cuenta"],
-                    tipo=resultado.get("tipo_cuenta", "corriente"), moneda=resultado.get("moneda", "CLP"),
-                )
-                nuevas, duplicadas = 0, 0
-                with get_conn() as conn:
-                    for i, t in enumerate(resultado["transacciones"]):
-                        categoria = editados[i]["categoria"]
-                        categoria_manual = int(categoria != categorizar(t["descripcion"]))
-                        cur = conn.execute(
-                            """
-                            INSERT OR IGNORE INTO transacciones
-                                (cuenta_id, fecha, descripcion, sucursal, monto_cargo, monto_abono, saldo,
-                                 categoria, categoria_manual, cartola_numero, archivo_origen, hash_dedupe)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            (
-                                cuenta_id, t["fecha"].isoformat(), t["descripcion"], t["sucursal"],
-                                t["monto_cargo"], t["monto_abono"], t["saldo"], categoria, categoria_manual,
-                                resultado["cartola_numero"], estado["nombre"], t["hash_dedupe"],
-                            ),
-                        )
-                        if cur.rowcount:
-                            nuevas += 1
-                        else:
-                            duplicadas += 1
-
-                if resultado.get("estado_tc"):
-                    guardar_estado_tc(cuenta_id, resultado["estado_tc"])
-                if resultado["saldo_final"] is not None and resultado["saldo_disponible_fecha"] is not None:
-                    guardar_saldo_snapshot(
-                        cuenta_id, resultado["saldo_disponible_fecha"].isoformat(),
-                        resultado["saldo_disponible_hora"], resultado["saldo_final"],
-                    )
-                ui.notify(f"Listo: {nuevas} transacciones nuevas guardadas, {duplicadas} ya existian y se omitieron.", type="positive")
+                banco = banco_conocido or (selector_banco.value if selector_banco else None)
+                if not banco:
+                    ui.notify("Elige el banco de la tarjeta antes de guardar.", type="warning")
+                    return
+                lote = lote_desde_resultado(resultado, estado["nombre"], banco=banco)
+                categorias = [e["categoria"] for e in editados]
+                manuales = [int(cat != categorizar(t["descripcion"])) for cat, t in zip(categorias, resultado["transacciones"])]
+                try:
+                    r = guardar_lote(lote, categorias=categorias, manuales=manuales, banco=banco)
+                except ValueError as e:
+                    ui.notify(f"No se guardo nada: {e}", type="negative")
+                    return
+                ui.notify(f"Listo: {r.nuevas} transacciones nuevas guardadas, {r.duplicadas} ya existian y se omitieron.", type="positive")
 
             editable_table(
                 filas_editor,
@@ -184,5 +210,5 @@ def pagina_cargar_cartola():
             estado["password"] = ""
             _procesar.refresh()
 
-        ui.upload(on_upload=_al_subir, auto_upload=True, label="Selecciona el PDF").props('accept=".pdf"').classes("w-full")
+        ui.upload(on_upload=_al_subir, auto_upload=True, label="Selecciona el PDF o Excel (.xls)").props('accept=".pdf,.xls"').classes("w-full")
         _procesar()

@@ -124,10 +124,142 @@ así que los movimientos pasan por el servidor antes de llegar al dispositivo. P
 - Honestidad obligatoria: durante esos milisegundos el servidor sí ve los datos. La promesa correcta
   para esta función es "no almacenamos tus movimientos en forma legible", no "nunca los vemos". Debe
   ser opcional y explicado al activarla; quien no la active mantiene E2EE total con carga de PDFs.
-- Finanzas Abiertas (vigencia julio 2027): consumir las APIs de los bancos directamente exige
-  inscribirse como PSBI ante la CMF (sociedad chilena, políticas de seguridad y datos, certificado de
-  seguridad de interfaces y pruebas funcionales por terceros — ver NCG 514/569). Recomendación: partir
-  con un agregador ya inscrito y evaluar la inscripción propia solo si el volumen lo justifica.
+- Finanzas Abiertas: consumir las APIs de los bancos directamente exige ser PSBI. Los requisitos
+  verificados contra la norma están en §5.1. Recomendación: partir con un agregador ya habilitado y evaluar
+  la inscripción propia solo si el volumen lo justifica.
+
+### 5.1 Lo que exige la CMF (Sistema de Finanzas Abiertas) — revisión de octubre de 2026
+
+**Qué se leyó y qué no.** El texto original de la NCG 514 (julio de 2024) se leyó completo, directo del PDF
+de la CMF. La modificación de junio de 2026 (NCG 569, que incorpora el Anexo Técnico N°3) se conoce solo por
+el comunicado de la CMF y resúmenes de estudios jurídicos: **hay que leer su texto y el Anexo 3 antes de
+construir**. Lo marcado "(por verificar)" viene de fuentes secundarias.
+
+**Calendario.** La norma entra en vigencia en **julio de 2027** (antes julio de 2026). Eso no significa que
+los movimientos estén disponibles ese día: los bancos tienen un plazo posterior para habilitar cada API.
+En el texto original, para personas naturales: 6 meses para términos y canales, **15 meses** para
+enrolamiento, posiciones, historial de transacciones y productos vigentes (18 meses las líneas de crédito).
+La modificación redefine esos plazos "entre 5 y 18 meses" (por verificar el detalle), y una fuente indica que
+la operación plena podría extenderse hasta 2030 mientras falte el Anexo 4 de costos. **Planificar con que las
+APIs de movimientos estarán disponibles entre fines de 2027 y 2029, no en julio de 2027.** Hay además un
+periodo piloto de 60 días y un *sandbox* de la CMF para probar antes.
+
+**Quién puede pedir los datos.** Solo participantes inscritos en el Registro de PSBI (Prestadores de Servicios
+Basados en Información) o habilitados en la nómina especial si ya son proveedores financieros inscritos.
+La inscripción es voluntaria pero **solo para personas jurídicas chilenas** (o extranjeras con agencia en Chile),
+presentada por su representante legal, con estatutos, socios principales (≥10%) y malla societaria. Una persona
+natural no puede inscribirse. Una app instalada por el usuario (escritorio o celular) **no consulta al banco
+directamente**: lo hace el conector, que es el PSBI, con el consentimiento del cliente. El usuario "dueño de sus
+datos" los obtiene por el conector, no por una API personal.
+
+**Autenticación.** El banco debe autenticar al PSBI con un certificado digital emitido por una autoridad de
+validación extendida y contrastar sus permisos con el Directorio de Participantes de la CMF; el cliente se
+autentica en su banco con autenticación reforzada (dos factores independientes). Estándares: OAuth 2.0 y OpenID
+Connect, API REST/JSON y OpenAPI 3.1; los perfiles FAPI 2.0 y mTLS se mencionan en fuentes secundarias (por
+verificar en el Anexo 3).
+
+**Consentimiento** (sección III.D de la norma). Debe ser expreso, específico (qué datos, a qué institución, por
+cuánto tiempo o con qué frecuencia y para qué finalidad), guardado en un soporte duradero, y sin interfaces
+que lo induzcan (nada premarcado, ni condicionar el servicio a ceder datos que no necesita). Se piden solo los
+datos estrictamente necesarios y se usan solo para la finalidad consentida. Obliga a ofrecer un **panel de
+control gratuito, remoto y autenticado** donde el cliente vea y revoque cada consentimiento (institución,
+finalidad, datos, fecha y hora, plazo, estado), con registro íntegro de accesos por **5 años**, historial de
+consentimientos de 5 años, **revocación en tiempo real** entre participantes y un aviso si el cliente no
+entra al panel en un año.
+
+**Qué datos y cada cuánto.** Historial de uso y transacciones: actualización diaria, disponible hasta 5
+minutos después, historia de 12 meses en el texto original (la modificación la llevaría a 24 meses, por
+verificar). Posiciones históricas: saldos mensuales.
+
+**Costos.** Los bancos no pueden cobrar a un PSBI, salvo reembolso de costos incrementales al superar umbrales
+de llamadas: para historial de transacciones, posiciones y productos, **150 llamadas mensuales por cliente y por
+PSBI**. El Anexo 4 (costos) estaba pendiente. Conviene diseñar la sincronización para consumir pocas llamadas
+(una consulta diaria por cliente ya es ~30 al mes).
+
+**Qué obliga a guardar 5 años (y qué no).** La norma menciona los 5 años en tres lugares:
+1. Registro de los eventos de las APIs, incluida "la información que se transmite" (sección III.B.3.c). Está en el
+   apartado de seguridad y contingencia **de las APIs**, dirigido a las "entidades supervisadas" que las operan, es decir
+   los bancos que las exponen; un PSBI las consume y no las expone. Por verificar en la NCG 569 y el Anexo 3.
+2. Registro íntegro de los **accesos e interacciones de los clientes con el panel de control** (III.D.2.e).
+3. Visualización de los **consentimientos** otorgados, revocados o caducados en los últimos 5 años (III.D.2.f).
+
+Los puntos 2 y 3 sí alcanzan al PSBI, pero son datos del consentimiento, no de las finanzas del cliente. **Ninguno
+obliga a un PSBI a conservar los movimientos.** Esos datos los tiene el banco, y la app solo los muestra en una
+herramienta consolidada, de modo que pueden vivir únicamente en el dispositivo del usuario, que es lo que promete este
+plan. Pendiente para el abogado: confirmar que el punto 1 no alcanza al PSBI en la norma vigente, y fijar el plazo de
+conservación de cada dato que sí se guarde (consentimientos, bitácora del panel, registros de seguridad sin contenido
+financiero) en el registro de actividades de tratamiento, bajo el principio de no guardar más de lo necesario (Ley 21.719).
+
+### 5.2 Modelo elegido: empresa propia como PSBI, solo lectura
+
+Decisión del producto (octubre de 2026): se constituye una **empresa** que será el PSBI, y los usuarios solo le
+otorgan permiso de **consulta** de sus datos. No se inicia ningún pago.
+
+**Por qué "solo consulta" simplifica.** Los proveedores de iniciación de pagos (PSIP) deben, además, acreditar
+garantías (póliza o boleta bancaria renovadas cada trimestre), cumplir requisitos del Banco Central y un plan para
+que no queden transacciones pendientes. Nada de eso aplica a un PSBI. Conviene no ofrecer nunca pagos desde la
+app mientras se quiera mantener este perfil de bajo riesgo regulatorio.
+
+**Qué debe presentar la empresa para inscribirse** (NCG 514, sección I.C; texto original, por verificar contra
+la NCG 569 y el Anexo 3). Se presenta por el canal electrónico de la CMF, firmado por el representante legal, que
+responde personalmente por la veracidad:
+
+| Letra | Antecedente |
+|---|---|
+| a | Estatutos y certificados de vigencia (en sociedades de la Ley 20.659, el certificado de incorporación y estatuto actualizado) |
+| b | Poder del representante que presenta la solicitud |
+| c | Plan de negocios: servicios que dará como PSBI, tipo de clientes y qué conjuntos de datos del sistema usará |
+| d | Organigrama: cargos clave, comités y quién responde por cumplir los requisitos de gestión, operativos y de seguridad |
+| e | Relación con clientes: servicios y condiciones, cómo se garantiza el funcionamiento del consentimiento y la autenticación, cómo ejercen sus derechos |
+| f | Consentimiento: los textos exactos con que se pide y el flujo de obtención, registro, resguardo y gestión (art. 23 Ley Fintec) |
+| g | Tratamiento de datos personales: cómo se registra, controla y restringe el acceso, medidas técnicas y organizativas, y el **registro de actividades de tratamiento** (finalidad, plazo de conservación, base de licitud, categorías de datos y de destinatarios) |
+| h | Declaración jurada de no tener la inhabilidad del art. 19 de la Ley Fintec |
+| i | Políticas de gestión de riesgos y control interno (sección III de la norma) |
+| j | **Certificado** de correcta implementación de los perfiles de seguridad de interfaces, emitido por un tercero (condiciones en el Anexo 3) |
+| k | Certificado de no estar en quiebra ni en procedimiento concursal (máximo 30 días de antigüedad) |
+| l | **Reporte de pruebas funcionales** de consumo de las APIs en el área de pruebas, hecho por un tercero (Anexo 3) |
+
+Además se pagan los derechos del art. 33 del D.L. 3.538 (monto por consultar), y cualquier cambio en lo declarado
+se informa a la CMF dentro de 5 días hábiles.
+
+**Qué debe cumplir y operar de forma continua** (sección III, aplica a todos los participantes):
+- El directorio u órgano equivalente aprueba cada año las políticas de gestión de riesgos y de seguridad.
+- Plan de gestión de riesgos, riesgo operacional y control de proveedores externos (el hosting y los subcontratos
+  también quedan bajo responsabilidad de la empresa).
+- Seguridad de la información y ciberseguridad: procedimientos de respuesta y recuperación ante incidentes
+  actualizados al menos una vez al año, gestión de cambios con pruebas de seguridad antes de pasar a producción,
+  gestión de obsolescencia y de parches, y **pruebas de vulnerabilidades al menos una vez al año**, con
+  resultados reportados al directorio.
+- **Reportar a la CMF** los incidentes operacionales y de ciberseguridad (fugas de información, indisponibilidad,
+  malware, fraude) y avisar a los clientes afectados.
+- Panel de control del consentimiento accesible desde la web (§5.1), con registros de 5 años.
+- Acceso a las APIs de los bancos con certificado digital propio, sin necesidad de acuerdos comerciales con cada
+  banco (la norma prohíbe a los bancos discriminar o exigir pactos adicionales).
+
+**Qué cambia en la arquitectura frente al plan con agregador (§5):**
+- La empresa es directamente responsable ante la CMF, no un tercero. El agregador pasaría a ser, como mucho, un
+  puente temporal mientras los bancos no tengan APIs (no antes de fines de 2027, §5.1).
+- El panel de consentimiento debe poder usarse también desde la web, no solo desde la app, y el consentimiento se
+  guarda **en la empresa** además de en el dispositivo. El cifrado de extremo a extremo protege los movimientos; los
+  consentimientos y la bitácora del panel son otra cosa y la norma obliga a conservarlos 5 años. Los movimientos, en
+  cambio, no tienen esa obligación para un PSBI (por verificar en la NCG 569), así que pueden quedar solo en el
+  dispositivo del usuario.
+- El servicio debe separar con claridad el **panel de consentimiento** (obligación regulatoria, gratuito) de la
+  **suscripción** (producto): revocar o no pagar no puede bloquear el derecho a ver y revocar consentimientos.
+
+**Orden sugerido (hay margen: los bancos no tendrán las APIs de movimientos antes de fines de 2027):**
+1. Constituir la sociedad (con objeto social que incluya servicios habilitados por información financiera),
+   designar representante legal y definir el órgano que aprobará las políticas.
+2. Contratar asesoría legal en Ley Fintec, protección de datos (Ley 21.719) y consumo; resolver la pregunta
+   abierta de §5.1.
+3. Leer el texto vigente (NCG 569 y Anexos 3 y 4) y probar en el *sandbox* y el portal del desarrollador de la CMF.
+4. Construir el conector y el panel de consentimiento (fases 1 a 4 de la hoja de ruta) con el programa de
+   seguridad de §9 y el contrato de ingesta de §12.
+5. Contratar a los terceros que certifican las interfaces y hacen las pruebas funcionales (letras j y l).
+6. Redactar los documentos de las letras c a i, inscribirse y completar el periodo piloto.
+
+Esto no es asesoría legal: está leído de la norma original y hay que validarlo con un abogado y con la
+modificación vigente.
 
 ## 6. Celular
 
@@ -235,8 +367,55 @@ Checklist de revisiones por etapa. Cada etapa se cierra recién cuando sus casil
 | Fase | Entrega | Depende de |
 |---|---|---|
 | 0 ✅ | Bóveda cifrada local, código de recuperación, respaldos cifrados | — |
+| 0.5 ✅ | Contrato de ingesta (§12): toda fuente entrega un `LoteImportacion`, un solo camino de guardado, UUID global, fuente e id externo | Fase 0 |
 | 1 | Servicio de identidad: registro, verificación de email, inicio de sesión (§3.1–3.3), 2FA, dispositivos; sincronización de blob cifrado; bloqueo automático por inactividad; instalador firmado | Servidor mínimo (FastAPI) |
 | 2 | Suscripción: planes, pagos por webhook, licencia firmada con gracia offline y modo solo lectura (§3.4–3.5); licencia del repositorio; auditoría de seguridad externa | Fase 1 + procesador de pagos |
 | 3 | PWA para celular (consulta, registro manual, recurrentes, metas), desbloqueo con biometría | Fase 1; portar lógica de análisis |
-| 4 | Conexión con bancos vía agregador con "sealed box" (opcional por usuario) | Fase 3; contrato con agregador |
+| 4 | Conexión con bancos vía agregador con "sealed box" (opcional por usuario); el conector entrega lotes por el contrato de §12 | Fase 3; contrato con agregador; APIs de los bancos disponibles (§5.1) |
 | 5 | Sincronización por eventos; evaluar inscripción PSBI | Volumen de usuarios |
+
+## 12. Fuentes de datos y contrato de ingesta
+
+El producto es **local primero**: los datos del usuario viven cifrados en su dispositivo (escritorio o celular) y
+un servicio por suscripción (el conector) trae los movimientos desde los bancos. Para que pasar de archivos a
+APIs sea cambiar una fuente y no reescribir la app, toda entrada de datos pasa por un único contrato:
+
+```
+ Archivo PDF / Excel ──▶ parser ──▶ adaptador de archivo ─┐
+                                                          ├─▶ LoteImportacion ─▶ validar() ─▶ guardar_lote() ─▶ base local cifrada
+ Conector (API de bancos) ──────▶ adaptador de API ───────┘      (contrato)       (rechaza el        (una transacción,
+                                                                                    lote entero)       idempotente)
+```
+
+| Pieza | Archivo | Qué garantiza |
+|---|---|---|
+| Contrato | `src/fuentes/contrato.py` | Un solo formato de cuenta, movimiento y lote; `validar()` rechaza datos inconsistentes (montos negativos, cargo y abono a la vez, moneda o tipo desconocidos, `id_externo` repetido, sin forma de evitar duplicados) |
+| Adaptador de archivos | `src/fuentes/archivo.py` | Traduce lo que devuelven los parsers actuales al contrato; es el único lugar que lo sabe |
+| Guardado | `src/ingesta.py` | Todo el lote en una transacción; carga idempotente; reemplaza lo provisional; nunca pisa la categoría que eligió el usuario |
+| Interfaz del conector | `src/fuentes/conector.py` | Consentimientos (con los campos que exige la norma), `sincronizar()` que devuelve lotes, y un conector "no configurado" que falla con un mensaje claro |
+| Base de datos | `src/db.py` | `fuente`, `id_externo` y `uid` (UUID global) por movimiento y cuenta; índices únicos; el UUID lo asigna la base si falta |
+
+Decisiones que quedan escritas en el código:
+
+- **Idempotencia con id del banco.** Si el movimiento trae `id_externo`, se identifica por (cuenta, id): al
+  volver a recibirlo se **actualiza** lo que el banco pudo cambiar (un pendiente que pasa a contabilizado, un monto
+  corregido) en vez de duplicarlo. Sin id (archivos) se usa la huella de fecha, glosa y montos.
+- **Estado del movimiento.** `facturado` o `por_facturar` equivale a contabilizado o pendiente de una API.
+  Los pendientes son provisionales y los reemplaza la siguiente carga.
+- **UUID global.** Es lo que permite sincronizar PC y celular por eventos (§4, fase 2) sin que choquen los ids
+  autoincrementales de cada dispositivo.
+- **Sin secretos en el contrato.** El origen de un lote es una etiqueta; los tokens del conector van solo en la
+  bóveda cifrada.
+
+**Pendiente, en orden de importancia antes de automatizar:**
+
+1. **Montos como enteros.** Hoy son `float`. Para dinero conviene guardar la unidad mínima (pesos, centavos de
+   dólar) como entero, para que sumas y conciliaciones no arrastren errores de redondeo. Hay que migrarlo antes de
+   recibir miles de movimientos automáticos.
+2. **Conciliar archivo con API al migrar.** Quien ya cargó PDF tendrá los mismos movimientos llegando por API
+   con otra glosa. Hace falta una regla de equivalencia (misma cuenta, fecha, monto y estado), precedencia de la
+   API sobre el archivo y una lista de posibles duplicados para revisar, no un borrado automático.
+3. **Serialización del contrato.** Definir su esquema JSON (OpenAPI) para el servicio y para un cliente móvil que
+   no sea Python.
+4. **Identificadores de cuenta del banco** y su relación con el consentimiento que los habilitó.
+5. **Almacén de credenciales** del conector dentro de la bóveda: solo lectura, revocable, nunca en logs.

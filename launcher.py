@@ -15,7 +15,8 @@ import sys
 import webbrowser
 from pathlib import Path
 
-PUERTO = 8765
+# MFP_PUERTO permite correr otra copia (pruebas) sin chocar con la app que ya esta abierta.
+PUERTO = int(os.environ.get("MFP_PUERTO", "8765"))
 
 
 def _app_dir() -> Path:

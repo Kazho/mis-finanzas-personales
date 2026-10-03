@@ -8,9 +8,15 @@ Al juntar varios bancos en una sola plataforma aparecen dos casos que, sin conci
     diferencia.
 
 Un par se concilia solo si ambos lados existen (asi, un pago de tarjeta cuya tarjeta no has cargado sigue
-contando como gasto, que es lo correcto: esa es la unica huella de ese consumo) y solo entre movimientos
-de la MISMA moneda. Los pares conciliados quedan en la categoria neutra `CATEGORIA_TRASPASO`, que el
-analisis excluye de gastos e ingresos. No se toca la base de datos: se recalcula al cargar los datos, asi
+contando como gasto, que es lo correcto: esa es la unica huella de ese consumo). Los traspasos solo se
+emparejan entre movimientos de la MISMA moneda; el pago de una tarjeta tambien puede salir de una cuenta en
+otra moneda (ej. tarjeta en USD pagada desde una cuenta en pesos), y ahi se compara al dolar observado con
+un margen, porque cada banco aplica su propio tipo de cambio.
+
+El lado de la TARJETA de un pago nunca es ingreso: aunque no se encuentre su cargo (porque no cargaste esa
+cuenta, o por diferencia de cambio), igual queda neutro, ya que el gasto real son las compras de la tarjeta.
+Los pares conciliados quedan en la categoria neutra `CATEGORIA_TRASPASO`, que el analisis excluye de
+gastos e ingresos. No se toca la base de datos: se recalcula al cargar los datos, asi
 que cargar la cartola que faltaba concilia sola lo que antes quedaba suelto.
 """
 import pandas as pd
@@ -19,6 +25,7 @@ CATEGORIA_TRASPASO = "Traspaso propio"
 
 VENTANA_PAGO_TC_DIAS = 7
 VENTANA_TRASPASO_DIAS = 3
+MARGEN_CAMBIO = 0.04  # diferencia maxima entre el pago en USD y el cargo en pesos, respecto del dolar observado
 
 _PALABRAS_TRASPASO = ("TRASPASO", "TRANSFERENCIA", "TRANSF")
 _PREFIJO_PAGO_TC = "PAGO TARJETA DE CREDITO"
@@ -36,12 +43,33 @@ def _mejor_par(fecha_a, monto_a, candidatos: pd.DataFrame, columna_monto: str, v
     return candidatos.loc[ok].assign(_d=dif_dias[ok]).sort_values(["_d", "id"]).iloc[0]["id"]
 
 
-def conciliar_traspasos(df: pd.DataFrame) -> pd.DataFrame:
+def _buscar_entre_monedas(pagos: pd.DataFrame, cargos: pd.DataFrame, dolar: float, usados: set, pares: list) -> None:
+    """Segunda pasada para los pagos de tarjeta que no calzaron en su misma moneda: el cargo puede estar en
+    otra moneda. Se compara el monto convertido al dolar observado, con un margen relativo."""
+    for _, pago in pagos.sort_values(["fecha", "id"]).iterrows():
+        if pago["id"] in usados:
+            continue
+        cand = cargos[(cargos["moneda"] != pago["moneda"]) & ~cargos["id"].isin(usados)]
+        if cand.empty:
+            continue
+        # Todo se lleva a la moneda del pago.
+        factor = dolar if pago["moneda"] == "CLP" else 1 / dolar
+        equivalente = cand["monto_cargo"] * factor
+        dif_dias = (cand["fecha"] - pago["fecha"]).abs().dt.days
+        ok = ((equivalente - pago["monto_abono"]).abs() <= pago["monto_abono"] * MARGEN_CAMBIO) & (dif_dias <= VENTANA_PAGO_TC_DIAS)
+        if ok.any():
+            mejor = cand.loc[ok].assign(_d=dif_dias[ok]).sort_values(["_d", "id"]).iloc[0]["id"]
+            usados.update((pago["id"], mejor))
+            pares.append((pago["id"], mejor))
+
+
+def conciliar_traspasos(df: pd.DataFrame, dolar: float | None = None) -> pd.DataFrame:
     """Devuelve una copia de `df` con categoria = CATEGORIA_TRASPASO en los movimientos conciliados.
 
     Espera las columnas id, fecha (datetime), descripcion, monto_cargo, monto_abono, categoria, cuenta, tipo y
     moneda. Los movimientos cuya categoria fue elegida a mano (`categoria_manual` == 1, si la columna existe)
-    no se tocan: si el usuario los clasifico, se respeta. `.attrs["n_conciliados"]` trae la cantidad de pares."""
+    no se tocan: si el usuario los clasifico, se respeta. `dolar` permite conciliar pagos de tarjeta entre monedas.
+    `.attrs["n_conciliados"]` trae la cantidad de pares."""
     df = df.copy()
     df.attrs["n_conciliados"] = 0
     if df.empty or "tipo" not in df.columns:
@@ -74,6 +102,8 @@ def conciliar_traspasos(df: pd.DataFrame) -> pd.DataFrame:
     pagos_tc = df[(df["tipo"] == "tarjeta") & (df["monto_abono"] > 0) & df["_desc"].str.startswith(_PREFIJO_PAGO_TC) & df["_libre"]]
     cargos_cuenta = df[sin_tc & (df["monto_cargo"] > 0) & df["_libre"]]
     _buscar(pagos_tc, cargos_cuenta, "monto_abono", "monto_cargo", VENTANA_PAGO_TC_DIAS, misma_cuenta_ok=True)
+    if dolar:
+        _buscar_entre_monedas(pagos_tc, cargos_cuenta, dolar, usados, pares)
 
     # 2) traspaso entre cuentas propias: ambos lados con glosa de transferencia, en cuentas distintas
     es_transf = df["_desc"].apply(lambda d: any(p in d for p in _PALABRAS_TRASPASO))
@@ -82,6 +112,8 @@ def conciliar_traspasos(df: pd.DataFrame) -> pd.DataFrame:
     _buscar(cargos_transf, abonos_transf, "monto_cargo", "monto_abono", VENTANA_TRASPASO_DIAS, misma_cuenta_ok=False)
 
     ids = {i for par in pares for i in par}
+    # El lado tarjeta de un pago nunca es ingreso, se haya encontrado su cargo o no.
+    ids |= set(pagos_tc["id"])
     df.loc[df["id"].isin(ids), "categoria"] = CATEGORIA_TRASPASO
     df.attrs["n_conciliados"] = len(pares)
     return df.drop(columns=["_libre", "_desc"])

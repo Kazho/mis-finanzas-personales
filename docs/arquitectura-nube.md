@@ -176,11 +176,90 @@ de llamadas: para historial de transacciones, posiciones y productos, **150 llam
 PSBI**. El Anexo 4 (costos) estaba pendiente. Conviene diseñar la sincronización para consumir pocas llamadas
 (una consulta diaria por cliente ya es ~30 al mes).
 
-**Pregunta abierta para el abogado.** La norma exige a las instituciones guardar registro de las consultas del
-sistema por 5 años, incluida "la información que se transmite". La promesa de este plan es que el servidor no
-conserva los movimientos en claro (§5, *sealed box*). Hay que confirmar qué debe conservar el conector como
-PSBI (consentimientos y metadatos de cada consulta, seguro; el contenido de los movimientos, por aclarar) y
-si ese registro puede guardarse cifrado de modo que el servicio no pueda leerlo.
+**Qué obliga a guardar 5 años (y qué no).** La norma menciona los 5 años en tres lugares:
+1. Registro de los eventos de las APIs, incluida "la información que se transmite" (sección III.B.3.c). Está en el
+   apartado de seguridad y contingencia **de las APIs**, dirigido a las "entidades supervisadas" que las operan, es decir
+   los bancos que las exponen; un PSBI las consume y no las expone. Por verificar en la NCG 569 y el Anexo 3.
+2. Registro íntegro de los **accesos e interacciones de los clientes con el panel de control** (III.D.2.e).
+3. Visualización de los **consentimientos** otorgados, revocados o caducados en los últimos 5 años (III.D.2.f).
+
+Los puntos 2 y 3 sí alcanzan al PSBI, pero son datos del consentimiento, no de las finanzas del cliente. **Ninguno
+obliga a un PSBI a conservar los movimientos.** Esos datos los tiene el banco, y la app solo los muestra en una
+herramienta consolidada, de modo que pueden vivir únicamente en el dispositivo del usuario, que es lo que promete este
+plan. Pendiente para el abogado: confirmar que el punto 1 no alcanza al PSBI en la norma vigente, y fijar el plazo de
+conservación de cada dato que sí se guarde (consentimientos, bitácora del panel, registros de seguridad sin contenido
+financiero) en el registro de actividades de tratamiento, bajo el principio de no guardar más de lo necesario (Ley 21.719).
+
+### 5.2 Modelo elegido: empresa propia como PSBI, solo lectura
+
+Decisión del producto (octubre de 2026): se constituye una **empresa** que será el PSBI, y los usuarios solo le
+otorgan permiso de **consulta** de sus datos. No se inicia ningún pago.
+
+**Por qué "solo consulta" simplifica.** Los proveedores de iniciación de pagos (PSIP) deben, además, acreditar
+garantías (póliza o boleta bancaria renovadas cada trimestre), cumplir requisitos del Banco Central y un plan para
+que no queden transacciones pendientes. Nada de eso aplica a un PSBI. Conviene no ofrecer nunca pagos desde la
+app mientras se quiera mantener este perfil de bajo riesgo regulatorio.
+
+**Qué debe presentar la empresa para inscribirse** (NCG 514, sección I.C; texto original, por verificar contra
+la NCG 569 y el Anexo 3). Se presenta por el canal electrónico de la CMF, firmado por el representante legal, que
+responde personalmente por la veracidad:
+
+| Letra | Antecedente |
+|---|---|
+| a | Estatutos y certificados de vigencia (en sociedades de la Ley 20.659, el certificado de incorporación y estatuto actualizado) |
+| b | Poder del representante que presenta la solicitud |
+| c | Plan de negocios: servicios que dará como PSBI, tipo de clientes y qué conjuntos de datos del sistema usará |
+| d | Organigrama: cargos clave, comités y quién responde por cumplir los requisitos de gestión, operativos y de seguridad |
+| e | Relación con clientes: servicios y condiciones, cómo se garantiza el funcionamiento del consentimiento y la autenticación, cómo ejercen sus derechos |
+| f | Consentimiento: los textos exactos con que se pide y el flujo de obtención, registro, resguardo y gestión (art. 23 Ley Fintec) |
+| g | Tratamiento de datos personales: cómo se registra, controla y restringe el acceso, medidas técnicas y organizativas, y el **registro de actividades de tratamiento** (finalidad, plazo de conservación, base de licitud, categorías de datos y de destinatarios) |
+| h | Declaración jurada de no tener la inhabilidad del art. 19 de la Ley Fintec |
+| i | Políticas de gestión de riesgos y control interno (sección III de la norma) |
+| j | **Certificado** de correcta implementación de los perfiles de seguridad de interfaces, emitido por un tercero (condiciones en el Anexo 3) |
+| k | Certificado de no estar en quiebra ni en procedimiento concursal (máximo 30 días de antigüedad) |
+| l | **Reporte de pruebas funcionales** de consumo de las APIs en el área de pruebas, hecho por un tercero (Anexo 3) |
+
+Además se pagan los derechos del art. 33 del D.L. 3.538 (monto por consultar), y cualquier cambio en lo declarado
+se informa a la CMF dentro de 5 días hábiles.
+
+**Qué debe cumplir y operar de forma continua** (sección III, aplica a todos los participantes):
+- El directorio u órgano equivalente aprueba cada año las políticas de gestión de riesgos y de seguridad.
+- Plan de gestión de riesgos, riesgo operacional y control de proveedores externos (el hosting y los subcontratos
+  también quedan bajo responsabilidad de la empresa).
+- Seguridad de la información y ciberseguridad: procedimientos de respuesta y recuperación ante incidentes
+  actualizados al menos una vez al año, gestión de cambios con pruebas de seguridad antes de pasar a producción,
+  gestión de obsolescencia y de parches, y **pruebas de vulnerabilidades al menos una vez al año**, con
+  resultados reportados al directorio.
+- **Reportar a la CMF** los incidentes operacionales y de ciberseguridad (fugas de información, indisponibilidad,
+  malware, fraude) y avisar a los clientes afectados.
+- Panel de control del consentimiento accesible desde la web (§5.1), con registros de 5 años.
+- Acceso a las APIs de los bancos con certificado digital propio, sin necesidad de acuerdos comerciales con cada
+  banco (la norma prohíbe a los bancos discriminar o exigir pactos adicionales).
+
+**Qué cambia en la arquitectura frente al plan con agregador (§5):**
+- La empresa es directamente responsable ante la CMF, no un tercero. El agregador pasaría a ser, como mucho, un
+  puente temporal mientras los bancos no tengan APIs (no antes de fines de 2027, §5.1).
+- El panel de consentimiento debe poder usarse también desde la web, no solo desde la app, y el consentimiento se
+  guarda **en la empresa** además de en el dispositivo. El cifrado de extremo a extremo protege los movimientos; los
+  consentimientos y la bitácora del panel son otra cosa y la norma obliga a conservarlos 5 años. Los movimientos, en
+  cambio, no tienen esa obligación para un PSBI (por verificar en la NCG 569), así que pueden quedar solo en el
+  dispositivo del usuario.
+- El servicio debe separar con claridad el **panel de consentimiento** (obligación regulatoria, gratuito) de la
+  **suscripción** (producto): revocar o no pagar no puede bloquear el derecho a ver y revocar consentimientos.
+
+**Orden sugerido (hay margen: los bancos no tendrán las APIs de movimientos antes de fines de 2027):**
+1. Constituir la sociedad (con objeto social que incluya servicios habilitados por información financiera),
+   designar representante legal y definir el órgano que aprobará las políticas.
+2. Contratar asesoría legal en Ley Fintec, protección de datos (Ley 21.719) y consumo; resolver la pregunta
+   abierta de §5.1.
+3. Leer el texto vigente (NCG 569 y Anexos 3 y 4) y probar en el *sandbox* y el portal del desarrollador de la CMF.
+4. Construir el conector y el panel de consentimiento (fases 1 a 4 de la hoja de ruta) con el programa de
+   seguridad de §9 y el contrato de ingesta de §12.
+5. Contratar a los terceros que certifican las interfaces y hacen las pruebas funcionales (letras j y l).
+6. Redactar los documentos de las letras c a i, inscribirse y completar el periodo piloto.
+
+Esto no es asesoría legal: está leído de la norma original y hay que validarlo con un abogado y con la
+modificación vigente.
 
 ## 6. Celular
 

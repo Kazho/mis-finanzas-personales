@@ -5,26 +5,17 @@ protegidas) es el motivo por el que esta vista usa @ui.refreshable en vez de sim
 una vez: en Streamlit ese reintento se hacia guardando la contraseña en session_state y forzando un
 st.rerun(); aca los bytes del PDF ya subido quedan en memoria (`estado`) y solo se vuelve a pintar la
 seccion de procesamiento, sin re-subir el archivo ni recargar la pagina."""
-import io
-
 import pandas as pd
-import pdfplumber
-from nicegui import ui
-from pdfminer.pdfdocument import PDFPasswordIncorrect
-from pdfplumber.utils.exceptions import PdfminerException
+from nicegui import run, ui
 
 from src.categorias import categorizar, listar_categorias
 from src.db import buscar_banco_por_numero
 from src.fuentes.archivo import lote_desde_resultado
 from src.ingesta import guardar_lote
 from src.formato import monto
-from src.parser_bancoestado import es_bancoestado_cuentarut, parse_cartola_bancoestado
-from src.parser_cartola import parse_cartola
-from src.parser_movimientos import es_movimientos, parse_movimientos
-from src.parser_tarjeta_credito import es_tarjeta_credito, parse_tarjeta_credito
-from src.parser_tarjeta_movimientos import (
-    es_tarjeta_no_facturada, es_tarjeta_xls, parse_tarjeta_facturado_xls, parse_tarjeta_no_facturada,
-)
+from src.lectura_aislada import LecturaFallida, leer_documento_aislado
+from src.lectura_documentos import ContrasenaRequerida, FormatoNoReconocido
+from src.seguridad_archivos import MAX_BYTES, ArchivoNoPermitido, nombre_seguro, validar_archivo
 from src.ui_nicegui.components import banner, kpi_cards, texto_muted
 from src.ui_nicegui.editable_table import editable_table
 from src.ui_nicegui.layout import layout
@@ -48,62 +39,51 @@ def pagina_cargar_cartola():
             "incluya de nuevo."
         )
 
-        estado = {"contenido": None, "nombre": None, "password": ""}
+        estado = {"contenido": None, "nombre": None, "password": "", "leyendo": False, "lectura": None,
+                  "error": None, "pide_clave": False}
 
-        def _leer_documento():
-            """Detecta el tipo de documento y lo parsea. Devuelve (resultado, tipo_documento, clase) o None si
-            ya mostro un mensaje (contraseña pendiente, error de lectura o formato no reconocido)."""
-            contenido = estado["contenido"]
-            if estado["nombre"].lower().endswith(".xls"):
-                try:
-                    if not es_tarjeta_xls(contenido):
-                        banner("error", "No se reconocio este Excel. Por ahora se soporta el Excel de movimientos facturados de tarjeta de credito.")
-                        return None
-                    return parse_tarjeta_facturado_xls(contenido), "Tarjeta de credito (facturado)", "tarjeta"
-                except Exception as e:
-                    banner("error", f"No se pudo leer el Excel. Detalle: {e}")
-                    return None
-
+        async def _leer():
+            """Lee el documento en un proceso aparte con tiempo limite (src/lectura_aislada.py) SIN bloquear la app: la
+            espera ocurre en un hilo, asi el resto de la app sigue respondiendo (hasta 30 s en el peor caso)."""
+            estado.update(leyendo=True, lectura=None, error=None, pide_clave=False)
+            _procesar.refresh()
             try:
-                with pdfplumber.open(io.BytesIO(contenido), password=estado["password"]) as pdf:
-                    texto_pagina1 = pdf.pages[0].extract_text() or ""
-            except PdfminerException as e:
-                if not isinstance(e.args[0] if e.args else None, PDFPasswordIncorrect):
-                    banner("error", f"No se pudo leer el PDF. Detalle: {e}")
-                    return None
-                banner("warning", "Este PDF esta protegido con contraseña (comun en las cartolas CuentaRUT de BancoEstado y en los estados de cuenta de tarjeta).")
-                pw_input = ui.input("Contraseña del PDF", password=True, password_toggle_button=True)
+                estado["lectura"] = await run.io_bound(
+                    leer_documento_aislado, estado["nombre"], estado["contenido"], estado["password"]
+                )
+            except ContrasenaRequerida:
+                estado["pide_clave"] = True
+            except (ArchivoNoPermitido, FormatoNoReconocido, LecturaFallida) as e:
+                estado["error"] = str(e)
+            except Exception:  # noqa: BLE001 - un fallo inesperado no debe mostrar detalles internos
+                estado["error"] = "No se pudo leer el archivo."
+            estado["leyendo"] = False
+            _procesar.refresh()
 
-                def _desbloquear():
-                    estado["password"] = pw_input.value or ""
-                    _procesar.refresh()
-
-                ui.button("Desbloquear", on_click=_desbloquear).props("color=primary")
-                return None
-
-            archivo, pw = io.BytesIO(contenido), estado["password"]
-            try:
-                if es_tarjeta_credito(texto_pagina1):
-                    return parse_tarjeta_credito(archivo, password=pw), "Estado de cuenta tarjeta de credito", "tarjeta"
-                if es_tarjeta_no_facturada(texto_pagina1):
-                    return parse_tarjeta_no_facturada(archivo, password=pw), "Tarjeta de credito (por facturar)", "tarjeta"
-                if es_bancoestado_cuentarut(texto_pagina1):
-                    return parse_cartola_bancoestado(archivo, password=pw), "Cartola CuentaRUT", "cuenta"
-                if es_movimientos(texto_pagina1):
-                    return parse_movimientos(archivo), "Movimientos al dia", "movimientos"
-                return parse_cartola(archivo), "Cartola oficial", "cuenta"
-            except Exception as e:
-                banner("error", f"No se pudo leer el PDF. Detalle: {e}")
-                return None
+        async def _desbloquear(pw_input):
+            estado["password"] = pw_input.value or ""
+            await _leer()
 
         @ui.refreshable
         def _procesar():
             if estado["contenido"] is None:
                 return
-            leido = _leer_documento()
-            if leido is None:
+            if estado["leyendo"]:
+                with ui.row().classes("items-center gap-2"):
+                    ui.spinner(size="md")
+                    texto_muted("Leyendo el archivo de forma segura...")
                 return
-            resultado, tipo_documento, clase = leido
+            if estado["pide_clave"]:
+                banner("warning", "Este PDF esta protegido con contraseña (comun en las cartolas CuentaRUT de BancoEstado y en los estados de cuenta de tarjeta).")
+                pw_input = ui.input("Contraseña del PDF", password=True, password_toggle_button=True)
+                ui.button("Desbloquear", on_click=lambda: _desbloquear(pw_input)).props("color=primary")
+                return
+            if estado["error"]:
+                banner("error", estado["error"])
+                return
+            if estado["lectura"] is None:
+                return
+            resultado, tipo_documento, clase = estado["lectura"]
             es_tarjeta = clase == "tarjeta"
             es_tipo_movimientos = clase == "movimientos"
             moneda = resultado.get("moneda", "CLP")
@@ -180,7 +160,12 @@ def pagina_cargar_cartola():
                     ui.notify("Elige el banco de la tarjeta antes de guardar.", type="warning")
                     return
                 lote = lote_desde_resultado(resultado, estado["nombre"], banco=banco)
-                categorias = [e["categoria"] for e in editados]
+                # Lo que llega de la tabla viene del navegador: se valida en el servidor, no se confia en el.
+                categorias = [e.get("categoria") for e in editados]
+                permitidas = set(listar_categorias())
+                if any(cat not in permitidas for cat in categorias):
+                    ui.notify("Hay una categoria que no existe. Recarga la pagina e intenta de nuevo.", type="negative")
+                    return
                 manuales = [int(cat != categorizar(t["descripcion"])) for cat, t in zip(categorias, resultado["transacciones"])]
                 try:
                     r = guardar_lote(lote, categorias=categorias, manuales=manuales, banco=banco)
@@ -205,10 +190,21 @@ def pagina_cargar_cartola():
             )
 
         async def _al_subir(e):
-            estado["contenido"] = await e.file.read()
-            estado["nombre"] = e.file.name
-            estado["password"] = ""
-            _procesar.refresh()
+            contenido = await e.file.read()
+            nombre = nombre_seguro(e.file.name)
+            try:
+                validar_archivo(nombre, contenido)
+            except ArchivoNoPermitido as ex:
+                estado.update(contenido=None, lectura=None, error=None, pide_clave=False, leyendo=False)
+                ui.notify(str(ex), type="negative")
+                _procesar.refresh()
+                return
+            estado.update(contenido=contenido, nombre=nombre, password="")
+            await _leer()
 
-        ui.upload(on_upload=_al_subir, auto_upload=True, label="Selecciona el PDF o Excel (.xls)").props('accept=".pdf,.xls"').classes("w-full")
+        ui.upload(
+            on_upload=_al_subir, auto_upload=True, label="Selecciona el PDF o Excel (.xls)",
+            max_file_size=MAX_BYTES,
+            on_rejected=lambda _: ui.notify(f"Archivo rechazado: supera el maximo de {MAX_BYTES // (1024 * 1024)} MB o no es .pdf/.xls.", type="negative"),
+        ).props('accept=".pdf,.xls"').classes("w-full")
         _procesar()

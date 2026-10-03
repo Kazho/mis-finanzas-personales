@@ -18,10 +18,21 @@ frontera de confianza: lo que llega de afuera se valida, no se asume):
   * Los montos se guardan hoy como `float` en pesos (o dolares con 2 decimales). Antes de abrir la app a un
     flujo automatico conviene pasarlos a enteros en la unidad minima: ver docs/arquitectura-nube.md §12.
 """
+import math
+import re
 from dataclasses import dataclass, field
-from datetime import date, time
+from datetime import date, time, timedelta
 
 from src.cuentas import MONEDAS, TIPOS
+
+# Limites de cordura: lo que llega de afuera no se asume sano. Una fecha absurda (ano 9999) rompe los calculos por mes
+# del Dashboard para siempre, y un monto infinito o gigantesco falsea todos los totales.
+MAX_MONTO = 1e11              # cien mil millones de pesos
+FECHA_MINIMA = date(1990, 1, 1)
+DIAS_FUTURO_PERMITIDOS = 400  # cuotas y vencimientos pueden quedar un tiempo adelante
+MAX_LARGO_TEXTO = 500
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+_NUMERO_CUENTA = re.compile(r"^[\w\-./* ]{1,40}$")
 
 FUENTE_PDF = "archivo_pdf"
 FUENTE_XLS = "archivo_xls"
@@ -103,19 +114,33 @@ class LoteImportacion:
             problemas.append(f"tipo de cuenta desconocido: {self.cuenta.tipo!r}")
         if self.cuenta.moneda not in MONEDAS:
             problemas.append(f"moneda desconocida: {self.cuenta.moneda!r}")
-        if not self.cuenta.numero:
-            problemas.append("la cuenta no trae numero")
+        if not self.cuenta.numero or not _NUMERO_CUENTA.match(self.cuenta.numero):
+            problemas.append("el numero de cuenta falta o tiene caracteres no permitidos")
+        for etiqueta, texto in (("banco", self.cuenta.banco), ("sufijo de cuenta", self.cuenta.sufijo_nombre),
+                                ("nombre del origen", self.origen.nombre)):
+            if texto and (len(texto) > 120 or _CONTROL.search(texto)):
+                problemas.append(f"{etiqueta} demasiado largo o con caracteres de control")
         if self.reemplaza_provisionales not in REEMPLAZOS:
             problemas.append(f"regla de reemplazo desconocida: {self.reemplaza_provisionales!r}")
         if self.reemplaza_provisionales == REEMPLAZA_HASTA_CORTE and self.periodo_hasta is None:
             problemas.append("reemplazar hasta el corte requiere periodo_hasta")
+        hoy = date.today()
         vistos_externos = set()
         for i, m in enumerate(self.movimientos, start=1):
             donde = f"movimiento {i} ({m.descripcion!r})"
             if not isinstance(m.fecha, date):
                 problemas.append(f"{donde}: la fecha no es una fecha")
+            elif not (FECHA_MINIMA <= m.fecha <= hoy + timedelta(days=DIAS_FUTURO_PERMITIDOS)):
+                problemas.append(f"{donde}: la fecha {m.fecha} esta fuera del rango razonable")
             if not isinstance(m.descripcion, str):
                 problemas.append(f"{donde}: la descripcion no es texto")
+            if not all(isinstance(v, (int, float)) and math.isfinite(v) and abs(v) <= MAX_MONTO for v in (m.monto_cargo, m.monto_abono)):
+                problemas.append(f"{donde}: monto no numerico, infinito o fuera de rango")
+                continue
+            if m.saldo is not None and not (isinstance(m.saldo, (int, float)) and math.isfinite(m.saldo) and abs(m.saldo) <= MAX_MONTO):
+                problemas.append(f"{donde}: saldo no numerico, infinito o fuera de rango")
+            if isinstance(m.descripcion, str) and (len(m.descripcion) > MAX_LARGO_TEXTO or _CONTROL.search(m.descripcion)):
+                problemas.append(f"{donde}: descripcion demasiado larga o con caracteres de control")
             if m.monto_cargo < 0 or m.monto_abono < 0:
                 problemas.append(f"{donde}: los montos no pueden ser negativos (el signo lo da cargo/abono)")
             if m.monto_cargo and m.monto_abono:

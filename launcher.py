@@ -45,6 +45,14 @@ def _ya_esta_corriendo() -> bool:
 
 
 def main():
+    # El lector aislado de documentos (src/lectura_aislada.py) se ejecuta como un proceso hijo de esta misma app: debe
+    # atenderse ANTES de redirigir la salida a un log o de arrancar el servidor, porque usa la entrada y salida estandar.
+    if "--lector-aislado" in sys.argv:
+        from src.lectura_aislada import main as lector_aislado
+
+        lector_aislado()
+        return
+
     _redirigir_salida_a_log()
 
     if _ya_esta_corriendo():

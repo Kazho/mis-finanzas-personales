@@ -7,7 +7,7 @@
 # submodulos empaquetar de cada paquete (ver comentarios en MisFinanzasPersonales.spec), y ese
 # ajuste esta atado a la version exacta con la que se probo -- un `pip install -U` entre builds
 # podria reintroducir errores de PackageNotFoundError/ModuleNotFoundError ya resueltos.
-pyinstaller==6.22.2
+pyinstaller==6.22.3
 nicegui==3.16.0
 pandas==3.0.5
 plotly==7.0.0

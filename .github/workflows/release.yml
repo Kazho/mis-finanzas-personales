@@ -60,7 +60,7 @@ jobs:
       # La clave de firma nunca pasa por GitHub, asi que tomar control del repo no basta para distribuir
       # una actualizacion que las apps acepten.
       - name: Publicar Release (borrador, pendiente de firma)
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           draft: true
           files: |
